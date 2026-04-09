@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Autocomplete,
   Box,
   Button,
   Container,
   Flex,
   Group,
   Text,
-  TextInput,
   Title,
 } from '@mantine/core';
 import '@mantine/core/styles.css';
@@ -32,6 +32,14 @@ const MAX_CARD_HEIGHT = 700;
 
 type SortMode = 'newest' | 'oldest' | 'top';
 
+function isVideoUrl(url: string) {
+  return /\.(mp4|webm)(\?.*)?$/i.test(url);
+}
+
+function isGifUrl(url: string) {
+  return /\.gif(\?.*)?$/i.test(url);
+}
+
 function buildColumns(items: Post[], count: number) {
   const columns: Post[][] = Array.from({ length: count }, () => []);
   const heights = Array.from({ length: count }, () => 0);
@@ -40,7 +48,6 @@ function buildColumns(items: Post[], count: number) {
     const w = item.width ?? item.preview_width ?? 1;
     const h = item.height ?? item.preview_height ?? 1;
     const ratio = h / w;
-
     const estimatedHeight = Math.min(MAX_CARD_HEIGHT, Math.max(120, ratio * 320));
 
     let target = 0;
@@ -55,20 +62,117 @@ function buildColumns(items: Post[], count: number) {
   return columns;
 }
 
-function normalizeTags(input: string) {
-  return input
-    .toLowerCase()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
+type MediaCardProps = {
+  post: Post;
+  columnIndex: number;
+  index: number;
+};
 
-function matchesTags(post: Post, query: string) {
-  const tags = normalizeTags(query);
-  if (tags.length === 0) return true;
+function MediaCard({ post, columnIndex, index }: MediaCardProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const haystack = (post.tags ?? '').toLowerCase();
-  return tags.every((tag) => haystack.includes(tag));
+  const fileUrl = post.file_url || '';
+  const previewUrl = post.preview_url || '';
+  const sampleUrl = post.sample_url || '';
+
+  const isVideo = Boolean(fileUrl && isVideoUrl(fileUrl));
+  const isGif = Boolean(fileUrl && isGifUrl(fileUrl));
+
+  const src = isVideo ? fileUrl : sampleUrl || previewUrl || fileUrl;
+  const originalSrc = fileUrl || src;
+
+  const w = post.width ?? post.preview_width ?? 1;
+  const h = post.height ?? post.preview_height ?? 1;
+
+  useEffect(() => {
+    if (!isVideo) return;
+    const el = wrapperRef.current;
+    const video = videoRef.current;
+    if (!el || !video) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) video.play().catch(() => {});
+        else video.pause();
+      },
+      { rootMargin: '-20% 0px -20% 0px', threshold: 0 }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isVideo]);
+
+  if (!src) return null;
+
+  return (
+    <Box style={{ padding: 4, boxSizing: 'border-box' }}>
+      <Box
+        ref={wrapperRef}
+        style={{
+          width: '100%',
+          aspectRatio: `${w} / ${h}`,
+          maxHeight: MAX_CARD_HEIGHT,
+          overflow: 'hidden',
+          backgroundColor: '#111',
+          borderRadius: 6,
+          position: 'relative',
+        }}
+      >
+        {(isVideo || isGif) && (
+          <Box
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              zIndex: 2,
+              padding: '4px 10px',
+              borderRadius: 999,
+              background: 'rgba(0, 0, 0, 0.65)',
+              backdropFilter: 'blur(6px)',
+              color: 'white',
+              fontSize: 12,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              pointerEvents: 'none',
+            }}
+          >
+            {isVideo ? 'Видео' : 'GIF'}
+          </Box>
+        )}
+
+        {isVideo ? (
+          <video
+            ref={videoRef}
+            src={src}
+            poster={previewUrl || sampleUrl}
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            onClick={() => window.open(originalSrc, '_blank')}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+          />
+        ) : (
+          <Box
+            component="img"
+            src={src}
+            alt={`Post ${post.id}`}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            onClick={() => window.open(originalSrc, '_blank')}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              cursor: post.file_url ? 'pointer' : 'default',
+            }}
+          />
+        )}
+      </Box>
+    </Box>
+  );
 }
 
 export default function Home() {
@@ -78,6 +182,7 @@ export default function Home() {
 
   const [tagInput, setTagInput] = useState('');
   const [appliedTags, setAppliedTags] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]); // ← Изменили на string[]
 
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [page, setPage] = useState(0);
@@ -85,14 +190,43 @@ export default function Home() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const prefetchLockRef = useRef(false);
 
+  // Подсказки тегов
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(async () => {
+      if (tagInput.trim().length < 1) {
+        setSuggestions([]);
+        return;
+      }
+
+      try {
+        const url = new URL(`${API_URL}/api/tags`);
+        url.searchParams.set('q', tagInput.trim());
+
+        const res = await fetch(url.toString());
+        if (res.ok) {
+          const data = await res.json();
+          // Преобразуем в string[] (Mantine v9 любит простой массив строк)
+          setSuggestions(Array.isArray(data) ? data.map((item: any) => item.value || item) : []);
+        }
+      } catch (e) {
+        console.error(e);
+        setSuggestions([]);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [tagInput]);
+
+  // Применение тега
+  useEffect(() => {
+    const timer = setTimeout(() => {
       setAppliedTags(tagInput.trim());
     }, 350);
 
-    return () => window.clearTimeout(timer);
+    return () => clearTimeout(timer);
   }, [tagInput]);
 
+  // Сброс при смене тега
   useEffect(() => {
     setPosts([]);
     setPage(0);
@@ -100,91 +234,57 @@ export default function Home() {
     prefetchLockRef.current = false;
   }, [appliedTags, sortMode]);
 
+  // Загрузка постов
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
         setLoading(true);
-
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
-        url.searchParams.set('pid', String(page * LIMIT));
+        url.searchParams.set('pid', String(page));
 
         if (appliedTags.trim()) {
           url.searchParams.set('tags', appliedTags.trim());
         }
 
-        const res = await fetch(url.toString(), {
-          signal: controller.signal,
-        });
-
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+        const res = await fetch(url.toString(), { signal: controller.signal });
+        if (!res.ok) throw new Error();
 
         const data = await res.json();
-        const list = Array.isArray(data) ? (data as Post[]) : [];
+        const list: Post[] = Array.isArray(data) ? data : [];
 
         setPosts((prev) => {
           const merged = page === 0 ? list : [...prev, ...list];
           const seen = new Set<number>();
-
-          const unique = merged.filter((post) => {
-            if (seen.has(post.id)) return false;
-            seen.add(post.id);
-            return true;
-          });
-
-          if (
-            list.length === LIMIT &&
-            unique.length < PREFETCH_BUFFER &&
-            !prefetchLockRef.current
-          ) {
-            prefetchLockRef.current = true;
-            window.setTimeout(() => {
-              prefetchLockRef.current = false;
-              setPage((p) => p + 1);
-            }, 0);
-          }
-
-          return unique;
+          return merged.filter((p) => !seen.has(p.id) && seen.add(p.id));
         });
 
         setHasMore(list.length === LIMIT);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          console.error('Ошибка загрузки:', error);
-          setHasMore(false);
-        }
+      } catch {
+        setHasMore(false);
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     }
 
     load();
-
     return () => controller.abort();
   }, [page, appliedTags]);
 
+  // Infinite Scroll
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        const first = entries[0];
-        if (first?.isIntersecting && hasMore && !loading) {
+        if (entries[0].isIntersecting && hasMore && !loading) {
           setPage((p) => p + 1);
         }
       },
-      {
-        root: null,
-        rootMargin: '2500px 0px',
-        threshold: 0,
-      }
+      { rootMargin: '2000px 0px' }
     );
 
     observer.observe(el);
@@ -192,18 +292,12 @@ export default function Home() {
   }, [hasMore, loading]);
 
   const visiblePosts = useMemo(() => {
-    const filtered = posts.filter((post) => matchesTags(post, appliedTags));
-
-    const sorted = [...filtered].sort((a, b) => {
+    return [...posts].sort((a, b) => {
       if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
-      if (sortMode === 'top') {
-        return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
-      }
+      if (sortMode === 'top') return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
       return (b.id ?? 0) - (a.id ?? 0);
     });
-
-    return sorted;
-  }, [posts, appliedTags, sortMode]);
+  }, [posts, sortMode]);
 
   const columns = useMemo(() => buildColumns(visiblePosts, 3), [visiblePosts]);
 
@@ -225,25 +319,23 @@ export default function Home() {
         </Title>
 
         <Group gap="xl">
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            🏠 Главная
-          </Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            🔥 В тренде
-          </Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            ⭐ Лучшие
-          </Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            🏷️ Теги
-          </Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>🏠 Главная</Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>🔥 В тренде</Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>⭐ Лучшие</Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>🏷️ Теги</Text>
         </Group>
 
-        <TextInput
-          placeholder="Введите теги..."
+        <Autocomplete
+          placeholder="Введите тег (например: female, anime, solo)..."
           leftSection="🔎"
           value={tagInput}
-          onChange={(event) => setTagInput(event.currentTarget.value)}
+          onChange={setTagInput}
+          data={suggestions}
+          limit={10}
+          onOptionSubmit={(value: string) => {
+            setTagInput(value);
+            setAppliedTags(value);
+          }}
           w={320}
           radius="md"
           styles={{
@@ -260,13 +352,7 @@ export default function Home() {
           radius="md"
           fw={600}
           onClick={() =>
-            setSortMode((current) =>
-              current === 'newest'
-                ? 'oldest'
-                : current === 'oldest'
-                  ? 'top'
-                  : 'newest'
-            )
+            setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))
           }
         >
           Сортировка: {sortLabel}
@@ -278,63 +364,16 @@ export default function Home() {
           {columns.map((column, columnIndex) => (
             <Box
               key={columnIndex}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 0,
-                margin: 0,
-                padding: 0,
-              }}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}
             >
-              {column.map((post, index) => {
-                const src = post.sample_url || post.preview_url || post.file_url || '';
-                if (!src) return null;
-
-                const originalSrc = post.file_url || src;
-                const w = post.width ?? post.preview_width ?? 1;
-                const h = post.height ?? post.preview_height ?? 1;
-
-                return (
-                  <Box
-                    key={`${post.id}-${columnIndex}-${index}`}
-                    style={{
-                      padding: 1,
-                      boxSizing: 'border-box',
-                    }}
-                  >
-                    <Box
-                      style={{
-                        width: '100%',
-                        aspectRatio: `${w} / ${h}`,
-                        maxHeight: MAX_CARD_HEIGHT,
-                        overflow: 'hidden',
-                        backgroundColor: '#111',
-                        borderRadius: 6,
-                        position: 'relative',
-                      }}
-                    >
-                      <Box
-                        component="img"
-                        src={src}
-                        alt={`Post ${post.id}`}
-                        loading="lazy"
-                        decoding="async"
-                        draggable={false}
-                        onClick={() => window.open(originalSrc, '_blank')}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          display: 'block',
-                          objectFit: 'cover',
-                          cursor: post.file_url ? 'pointer' : 'default',
-                        }}
-                      />
-                    </Box>
-                  </Box>
-                );
-              })}
+              {column.map((post, index) => (
+                <MediaCard
+                  key={`${post.id}-${columnIndex}-${index}`}
+                  post={post}
+                  columnIndex={columnIndex}
+                  index={index}
+                />
+              ))}
             </Box>
           ))}
         </Flex>
@@ -343,20 +382,11 @@ export default function Home() {
       </Container>
 
       <Text ta="center" c="dimmed" mt={60} size="sm">
-        3 колонки • infinite scroll • ранний prefetch • aspect-ratio placeholders
+        3 колонки • images + videos + gif
       </Text>
 
-      {loading && (
-        <Text ta="center" c="dimmed" mt={12} size="sm">
-          Загружаю...
-        </Text>
-      )}
-
-      {!hasMore && (
-        <Text ta="center" c="dimmed" mt={12} size="sm">
-          Больше постов нет
-        </Text>
-      )}
+      {loading && <Text ta="center" c="dimmed" mt={12}>Загружаю...</Text>}
+      {!hasMore && <Text ta="center" c="dimmed" mt={12}>Больше постов нет</Text>}
     </Box>
   );
 }

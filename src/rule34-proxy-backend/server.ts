@@ -6,59 +6,120 @@ const server = fastify({ logger: true });
 async function start() {
   await server.register(cors, { origin: '*' });
 
+  console.log('🚀 Сервер запускается...');
+
+  // ====================== ПОСТЫ ======================
   server.get('/api/posts', async (request, reply) => {
-    const { limit = '30', pid = '0', tags = '' } = request.query as {
-      limit?: string;
-      pid?: string;
-      tags?: string;
+    const { limit = '30', pid = '0', tags = '' } = request.query as any;
+
+    const total = Number(limit) || 30;
+    const startPage = Number(pid) || 0;
+    const userTags = String(tags).trim();
+
+    const baseParams = {
+      page: 'dapi',
+      s: 'post',
+      q: 'index',
+      json: '1',
+      limit: '100',
+      user_id: '6083293',
+      api_key: '335eb8b2d26006a378a4f68035f914eef2cfa8cffa669019d355d0d85ce211cd9a48f555bd378f1812b3bd11525eac159af1f3cd2d93828e032504f6dfb4d9cd',
     };
 
-    try {
+    function isVideo(post: any) {
+      const url = String(post.file_url || '').toLowerCase();
+      return url.endsWith('.mp4') || url.endsWith('.webm');
+    }
+
+    async function fetchPage(page: number) {
       const params = new URLSearchParams({
-        page: 'dapi',
-        s: 'post',
-        q: 'index',
-        json: '1',
-        limit,
-        pid,
-        user_id: '6083293',
-        api_key: '335eb8b2d26006a378a4f68035f914eef2cfa8cffa669019d355d0d85ce211cd9a48f555bd378f1812b3bd11525eac159af1f3cd2d93828e032504f6dfb4d9cd',
+        ...baseParams,
+        pid: String(page),
+        tags: ['animated', userTags].filter(Boolean).join(' '),
       });
 
-      if (tags.trim()) {
-        params.set('tags', tags.trim());
-      }
-
-      const url = `https://api.rule34.xxx/index.php?${params.toString()}`;
-      const res = await fetch(url);
-
-      if (!res.ok) {
-        return reply.code(502).send({ error: 'Upstream API error' });
-      }
-
+      const res = await fetch(`https://api.rule34.xxx/index.php?${params}`);
+      if (!res.ok) return [];
       const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
+      return Array.isArray(data) ? data : [];
+    }
 
-      return list.map((post: any) => ({
-        id: post.id,
-        file_url: post.file_url ?? null,
-        sample_url: post.sample_url ?? null,
-        preview_url: post.preview_url ?? null,
-        width: post.width ?? null,
-        height: post.height ?? null,
-        preview_width: post.preview_width ?? null,
-        preview_height: post.preview_height ?? null,
-        score: post.score ?? 0,
-        tags: post.tags ?? '',
-      }));
+    try {
+      let page = startPage;
+      let collected: any[] = [];
+
+      while (collected.length < total) {
+        const batch = await fetchPage(page);
+        if (batch.length === 0) break;
+        const videos = batch.filter(isVideo);
+        collected = [...collected, ...videos];
+        page++;
+      }
+
+      const seen = new Set<number>();
+      const unique = collected.filter((p: any) => !seen.has(p.id) && seen.add(p.id));
+
+      const shuffled = unique.sort(() => Math.random() - 0.5);
+      const final = shuffled.slice(0, total);
+
+      return reply.send(
+        final.map((post: any) => ({
+          id: post.id,
+          file_url: post.file_url ?? null,
+          sample_url: post.sample_url ?? null,
+          preview_url: post.preview_url ?? null,
+          width: post.width ?? null,
+          height: post.height ?? null,
+          preview_width: post.preview_width ?? null,
+          preview_height: post.preview_height ?? null,
+          score: post.score ?? 0,
+          tags: post.tags ?? '',
+        }))
+      );
     } catch (e) {
-      request.log.error(e);
+      console.error(e);
       return reply.code(500).send({ error: 'API error' });
     }
   });
 
+  // ====================== ТЕГИ (ПОДСКАЗКИ) ======================
+  server.get('/api/tags', async (request, reply) => {
+    const { q = '' } = request.query as any;
+    const query = String(q).trim();
+
+    console.log(`[TAGS] Запрос от фронта: "${query}"`);
+
+    if (query.length < 1) return reply.send([]);
+
+    const params = new URLSearchParams({
+      page: 'dapi',
+      s: 'tag',
+      q: 'index',
+      json: '1',
+      limit: '10',
+      name: query,
+      user_id: '6083293',
+      api_key: '335eb8b2d26006a378a4f68035f914eef2cfa8cffa669019d355d0d85ce211cd9a48f555bd378f1812b3bd11525eac159af1f3cd2d93828e032504f6dfb4d9cd',
+    });
+
+    try {
+      const res = await fetch(`https://api.rule34.xxx/index.php?${params}`);
+      if (!res.ok) return reply.send([]);
+
+      const data: any[] = await res.json();
+      const suggestions = data.map(tag => `${tag.name} (${tag.count})`);
+
+      return reply.send(suggestions);
+    } catch (e) {
+      console.error(e);
+      return reply.send([]);
+    }
+  });
+
   await server.listen({ port: 3001, host: '0.0.0.0' });
-  console.log('🚀 http://localhost:3001/api/posts');
+  console.log('✅ Сервер успешно запущен на http://localhost:3001');
+  console.log('   • /api/posts — готов');
+  console.log('   • /api/tags  — готов');
 }
 
-start();
+start().catch(console.error);
