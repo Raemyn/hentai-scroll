@@ -1,50 +1,73 @@
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
-  Title,
-  Text,
+  Button,
+  Container,
   Flex,
   Group,
+  Text,
   TextInput,
-  Button,
+  Title,
 } from '@mantine/core';
 import '@mantine/core/styles.css';
+import classes from './Home.module.scss';
 
-const images = [
-  "https://picsum.photos/id/1043/1920/1080", // 16:9 — будет крупнее по площади
-  "https://picsum.photos/id/1069/1920/1080",
-  "https://picsum.photos/id/1015/1920/1080",
-  "https://picsum.photos/id/201/1920/1080",
-  "https://picsum.photos/id/133/1920/1080",
-  "https://picsum.photos/id/243/1920/1080",
-  "https://picsum.photos/id/1025/800/600",
-  "https://picsum.photos/id/1074/600/600",
-  "https://picsum.photos/id/1084/600/600",
-  "https://picsum.photos/id/237/600/800",
-  "https://picsum.photos/id/238/600/800",
-  "https://picsum.photos/id/239/540/960",
-  "https://picsum.photos/id/240/540/960",
-  "https://picsum.photos/id/241/600/1000",
-  "https://picsum.photos/id/242/600/1100",
-  "https://picsum.photos/id/244/1200/400",
-  "https://picsum.photos/id/29/800/600",
-  "https://picsum.photos/id/160/600/650",
-];
+type Post = {
+  id: number;
+  file_url: string | null;
+  sample_url: string | null;
+  preview_url: string | null;
+  width?: number | null;
+  height?: number | null;
+  preview_width?: number | null;
+  preview_height?: number | null;
+};
 
-const Home = () => {
+const API_URL = 'http://localhost:3001';
+
+function buildColumns(items: Post[], count: number) {
+  const columns: Post[][] = Array.from({ length: count }, () => []);
+  const heights = Array.from({ length: count }, () => 0);
+
+  for (const item of items) {
+    const w = item.preview_width ?? item.width ?? 1;
+    const h = item.preview_height ?? item.height ?? 1;
+    const ratio = h / w;
+
+    let target = 0;
+    for (let i = 1; i < heights.length; i += 1) {
+      if (heights[i] < heights[target]) target = i;
+    }
+
+    columns[target].push(item);
+    heights[target] += ratio;
+  }
+
+  return columns;
+}
+
+export default function Home() {
+  const [posts, setPosts] = useState<Post[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/posts?limit=50`)
+      .then((res) => res.json())
+      .then((data) => setPosts(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        console.error('Ошибка загрузки:', error);
+        setPosts([]);
+      });
+  }, []);
+
+  const columns = useMemo(() => buildColumns(posts, 3), [posts]);
+
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
-      {/* Header */}
       <Flex
         align="center"
         justify="space-between"
         p="md"
-        style={{
-          borderBottom: '1px solid #222',
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-          backgroundColor: '#0a0a0a',
-        }}
+        className={classes.header}
       >
         <Title order={1} size="h2">
           Hentai Scroller
@@ -84,46 +107,60 @@ const Home = () => {
         </Button>
       </Flex>
 
-      {/* ПЛОТНЫЙ 3-КОЛОНОЧНЫЙ MASONRY — ZERO ПРОМЕЖУТКОВ */}
-      <div
-        style={{
-          columnCount: 3,           // строго 3 колонки
-          columnGap: '0px',         // горизонтального пространства нет
-          padding: '0 8px',         // лёгкие отступы по краям страницы
-        }}
-      >
-        {images.map((src, index) => (
-          <div
-            key={index}
-            
-            style={{
-                  // радиус скругления
-              breakInside: 'avoid',   // не разрывает карточку посередине
-              marginBottom: '0px',    // вертикального пространства между фото — 0
-              padding: '4px',           // дополнительно убираем любые отступы
-            }}
-          >
-            <img
-              src={src}
-              alt={`Hentai #${index}`}
+      <Container size="xl" px={0} py={0}>
+        <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
+          {columns.map((column, columnIndex) => (
+            <Box
+              key={columnIndex}
               style={{
-            
-                width: '100%',        // занимает всю ширину колонки
-                height: 'auto',       // высота по пропорциям (не обрезается)
-                display: 'block',
-                borderRadius: '8px',    // если хочешь совсем плотно — 0, или оставь '8px'
-                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0,
+                margin: 0,
+                padding: 0,
               }}
-            />
-          </div>
-        ))}
-      </div>
+            >
+              {column.map((post, index) => {
+                const src = post.sample_url || '';
+                if (!src) return null;
+
+                return (
+                  <Box
+                    key={`${post.id}-${columnIndex}-${index}`}
+                    style={{
+                      margin: 0,
+                      padding: 0,
+                      lineHeight: 0,
+                    }}
+                  >
+                    <Box
+                      component="img"
+                      src={src}
+                      alt={`Post ${post.id}`}
+                      loading="lazy"
+                      draggable={false}
+                      style={{
+                        width: '100%',
+                        display: 'block',
+                        margin: 0,
+                        padding: 2,
+                        border: 8,
+                        borderRadius: 0,
+                      }}
+                    />
+                  </Box>
+                );
+              })}
+            </Box>
+          ))}
+        </Flex>
+      </Container>
 
       <Text ta="center" c="dimmed" mt={60} size="sm">
-        3 колонки • Максимально плотно • Между фото нет ни пикселя пространства
+        3 колонки • без промежутков • preview_url
       </Text>
     </Box>
   );
-};
-
-export default Home;
+}

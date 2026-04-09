@@ -1,0 +1,46 @@
+/* Home.module.scss */
+
+.masonry {
+    column-count: 3;
+    column-gap: 0;
+    max-width: 1800px;
+    margin: 0 auto;
+    padding: 0 200px;
+}
+
+/* Адаптив — боковое пространство НЕ пропадает */
+@media (max-width: 1025px) {
+    .masonry {
+        column-count: 2;
+        padding: 0 28px;
+    }
+}
+
+@media (max-width: 765px) {
+    .masonry {
+        column-count: 1;
+        padding: 0 16px;
+    }
+}
+
+.header {
+    border-bottom: 1px solid #222;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: #0a0a0a;
+}
+
+.imageWrapper {
+    break-inside: avoid;
+    margin-bottom: 0;
+    padding: 2px;
+}
+
+.image {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}

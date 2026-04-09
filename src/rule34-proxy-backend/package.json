@@ -1,0 +1,22 @@
+{
+  "name": "rule34-proxy-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.ts",
+    "dev": "node --watch server.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "fastify": "^5.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "main": "index.js",
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
