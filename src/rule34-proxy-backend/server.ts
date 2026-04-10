@@ -6,13 +6,11 @@ const server = fastify({ logger: true });
 async function start() {
   await server.register(cors, { origin: '*' });
 
-  console.log('🚀 Сервер запускается...');
-
   // ====================== ПОСТЫ ======================
   server.get('/api/posts', async (request, reply) => {
-    const { limit = '30', pid = '0', tags = '' } = request.query as any;
+    const { limit = '15', pid = '0', tags = '' } = request.query as any;
 
-    const total = Number(limit) || 30;
+    const total = Number(limit) || 15;
     const startPage = Number(pid) || 0;
     const userTags = String(tags).trim();
 
@@ -26,6 +24,10 @@ async function start() {
       api_key: '335eb8b2d26006a378a4f68035f914eef2cfa8cffa669019d355d0d85ce211cd9a48f555bd378f1812b3bd11525eac159af1f3cd2d93828e032504f6dfb4d9cd',
     };
 
+    // Если пользователь выбрал тег — ищем ТОЛЬКО по нему
+    // Если ничего не ввёл — показываем animated (видео)
+    const searchTags = userTags ? userTags : 'animated';
+
     function isVideo(post: any) {
       const url = String(post.file_url || '').toLowerCase();
       return url.endsWith('.mp4') || url.endsWith('.webm');
@@ -35,7 +37,7 @@ async function start() {
       const params = new URLSearchParams({
         ...baseParams,
         pid: String(page),
-        tags: ['animated', userTags].filter(Boolean).join(' '),
+        tags: searchTags,
       });
 
       const res = await fetch(`https://api.rule34.xxx/index.php?${params}`);
@@ -51,11 +53,13 @@ async function start() {
       while (collected.length < total) {
         const batch = await fetchPage(page);
         if (batch.length === 0) break;
-        const videos = batch.filter(isVideo);
+
+        const videos = batch.filter(isVideo);           // оставляем только видео
         collected = [...collected, ...videos];
         page++;
       }
 
+      // Убираем дубли
       const seen = new Set<number>();
       const unique = collected.filter((p: any) => !seen.has(p.id) && seen.add(p.id));
 
@@ -77,7 +81,7 @@ async function start() {
         }))
       );
     } catch (e) {
-      console.error(e);
+      console.error('Ошибка /api/posts:', e);
       return reply.code(500).send({ error: 'API error' });
     }
   });
@@ -87,9 +91,7 @@ async function start() {
     const { q = '' } = request.query as any;
     const query = String(q).trim();
 
-    console.log(`[TAGS] Запрос от фронта: "${query}"`);
-
-    if (query.length < 1) return reply.send([]);
+    if (query.length < 2) return reply.send([]);
 
     const params = new URLSearchParams({
       page: 'dapi',
@@ -117,9 +119,9 @@ async function start() {
   });
 
   await server.listen({ port: 3001, host: '0.0.0.0' });
-  console.log('✅ Сервер успешно запущен на http://localhost:3001');
-  console.log('   • /api/posts — готов');
-  console.log('   • /api/tags  — готов');
+  console.log('🚀 Сервер запущен: http://localhost:3001');
+  console.log('   ✅ /api/posts');
+  console.log('   ✅ /api/tags');
 }
 
 start().catch(console.error);

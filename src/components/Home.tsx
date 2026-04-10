@@ -27,7 +27,6 @@ type Post = {
 
 const API_URL = 'http://localhost:3001';
 const LIMIT = 15;
-const PREFETCH_BUFFER = 45;
 const MAX_CARD_HEIGHT = 700;
 
 type SortMode = 'newest' | 'oldest' | 'top';
@@ -96,7 +95,7 @@ function MediaCard({ post, columnIndex, index }: MediaCardProps) {
         if (entry.isIntersecting) video.play().catch(() => {});
         else video.pause();
       },
-      { rootMargin: '-20% 0px -20% 0px', threshold: 0 }
+      { rootMargin: '-20% 0px -20% 0px' }
     );
 
     observer.observe(el);
@@ -107,68 +106,17 @@ function MediaCard({ post, columnIndex, index }: MediaCardProps) {
 
   return (
     <Box style={{ padding: 4, boxSizing: 'border-box' }}>
-      <Box
-        ref={wrapperRef}
-        style={{
-          width: '100%',
-          aspectRatio: `${w} / ${h}`,
-          maxHeight: MAX_CARD_HEIGHT,
-          overflow: 'hidden',
-          backgroundColor: '#111',
-          borderRadius: 6,
-          position: 'relative',
-        }}
-      >
+      <Box ref={wrapperRef} style={{ width: '100%', aspectRatio: `${w} / ${h}`, maxHeight: MAX_CARD_HEIGHT, overflow: 'hidden', backgroundColor: '#111', borderRadius: 6, position: 'relative' }}>
         {(isVideo || isGif) && (
-          <Box
-            style={{
-              position: 'absolute',
-              top: 8,
-              left: 8,
-              zIndex: 2,
-              padding: '4px 10px',
-              borderRadius: 999,
-              background: 'rgba(0, 0, 0, 0.65)',
-              backdropFilter: 'blur(6px)',
-              color: 'white',
-              fontSize: 12,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              pointerEvents: 'none',
-            }}
-          >
+          <Box style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, padding: '4px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.65)', color: 'white', fontSize: 12, fontWeight: 700 }}>
             {isVideo ? 'Видео' : 'GIF'}
           </Box>
         )}
 
         {isVideo ? (
-          <video
-            ref={videoRef}
-            src={src}
-            poster={previewUrl || sampleUrl}
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            onClick={() => window.open(originalSrc, '_blank')}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
-          />
+          <video ref={videoRef} src={src} poster={previewUrl} muted loop playsInline onClick={() => window.open(originalSrc, '_blank')} style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }} />
         ) : (
-          <Box
-            component="img"
-            src={src}
-            alt={`Post ${post.id}`}
-            loading="lazy"
-            decoding="async"
-            draggable={false}
-            onClick={() => window.open(originalSrc, '_blank')}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              cursor: post.file_url ? 'pointer' : 'default',
-            }}
-          />
+          <Box component="img" src={src} alt={`Post ${post.id}`} loading="lazy" onClick={() => window.open(originalSrc, '_blank')} style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }} />
         )}
       </Box>
     </Box>
@@ -182,60 +130,57 @@ export default function Home() {
 
   const [tagInput, setTagInput] = useState('');
   const [appliedTags, setAppliedTags] = useState('');
-  const [suggestions, setSuggestions] = useState<string[]>([]); // ← Изменили на string[]
+  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [page, setPage] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const prefetchLockRef = useRef(false);
 
-  // Подсказки тегов
+  // === ОТЛАДКА: основной useEffect для подсказок ===
   useEffect(() => {
+    console.log('🔍 useEffect сработал, tagInput =', tagInput); // ← должно появляться
+
+    if (tagInput.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
     const timer = setTimeout(async () => {
-      if (tagInput.trim().length < 1) {
-        setSuggestions([]);
-        return;
-      }
-
       try {
-        const url = new URL(`${API_URL}/api/tags`);
-        url.searchParams.set('q', tagInput.trim());
+        const url = `${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`;
+        console.log('📡 Запрос к:', url);
 
-        const res = await fetch(url.toString());
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          // Преобразуем в string[] (Mantine v9 любит простой массив строк)
-          setSuggestions(Array.isArray(data) ? data.map((item: any) => item.value || item) : []);
+          console.log('✅ Получено подсказок:', data);
+          setSuggestions(Array.isArray(data) ? data : []);
         }
-      } catch (e) {
-        console.error(e);
-        setSuggestions([]);
+      } catch (err) {
+        console.error('❌ Ошибка запроса тегов:', err);
       }
-    }, 250);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [tagInput]);
 
   // Применение тега
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setAppliedTags(tagInput.trim());
-    }, 350);
-
+    const timer = setTimeout(() => setAppliedTags(tagInput.trim()), 400);
     return () => clearTimeout(timer);
   }, [tagInput]);
 
-  // Сброс при смене тега
+  // Сброс постов
   useEffect(() => {
     setPosts([]);
     setPage(0);
     setHasMore(true);
-    prefetchLockRef.current = false;
   }, [appliedTags, sortMode]);
 
-  // Загрузка постов
+  // Загрузка постов (оставил как было)
   useEffect(() => {
+    // ... (твой код загрузки постов без изменений)
     const controller = new AbortController();
 
     async function load() {
@@ -244,14 +189,10 @@ export default function Home() {
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
-
-        if (appliedTags.trim()) {
-          url.searchParams.set('tags', appliedTags.trim());
-        }
+        if (appliedTags.trim()) url.searchParams.set('tags', appliedTags.trim());
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) throw new Error();
-
         const data = await res.json();
         const list: Post[] = Array.isArray(data) ? data : [];
 
@@ -273,120 +214,78 @@ export default function Home() {
     return () => controller.abort();
   }, [page, appliedTags]);
 
-  // Infinite Scroll
+  // Infinite scroll
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
-
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading) {
-          setPage((p) => p + 1);
-        }
+        if (entries[0].isIntersecting && hasMore && !loading) setPage((p) => p + 1);
       },
       { rootMargin: '2000px 0px' }
     );
-
     observer.observe(el);
     return () => observer.disconnect();
   }, [hasMore, loading]);
 
-  const visiblePosts = useMemo(() => {
-    return [...posts].sort((a, b) => {
-      if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
-      if (sortMode === 'top') return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
-      return (b.id ?? 0) - (a.id ?? 0);
-    });
-  }, [posts, sortMode]);
+  const visiblePosts = useMemo(() => [...posts].sort((a, b) => {
+    if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
+    if (sortMode === 'top') return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
+    return (b.id ?? 0) - (a.id ?? 0);
+  }), [posts, sortMode]);
 
   const columns = useMemo(() => buildColumns(visiblePosts, 3), [visiblePosts]);
-
-  const sortLabel =
-    sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+  const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
-      <Flex
-        align="center"
-        justify="space-between"
-        p="md"
-        className={classes.header}
-        gap="md"
-        wrap="wrap"
-      >
-        <Title order={1} size="h2">
-          Hentai Scroller
-        </Title>
+      <Flex align="center" justify="space-between" p="md" gap="md" wrap="wrap">
+        <Title order={1} size="h2">Hentai Scroller</Title>
 
         <Group gap="xl">
           <Text component="a" href="#" c="white" td="none" fw={500}>🏠 Главная</Text>
           <Text component="a" href="#" c="white" td="none" fw={500}>🔥 В тренде</Text>
           <Text component="a" href="#" c="white" td="none" fw={500}>⭐ Лучшие</Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>🏷️ Теги</Text>
         </Group>
 
         <Autocomplete
-          placeholder="Введите тег (например: female, anime, solo)..."
+          placeholder="Введите тег (например: anime, female)..."
           leftSection="🔎"
           value={tagInput}
-          onChange={setTagInput}
+          onChange={(value) => {
+            console.log('⌨️ onChange вызван:', value); // ← самое важное!
+            setTagInput(value);
+          }}
           data={suggestions}
           limit={10}
-          onOptionSubmit={(value: string) => {
+          onOptionSubmit={(value) => {
             setTagInput(value);
             setAppliedTags(value);
           }}
-          w={320}
+          w={360}
           radius="md"
-          styles={{
-            input: {
-              backgroundColor: '#1a1a1a',
-              borderColor: '#333',
-              color: 'white',
-            },
-          }}
         />
 
-        <Button
-          color="pink"
-          radius="md"
-          fw={600}
-          onClick={() =>
-            setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))
-          }
-        >
+        <Button color="pink" onClick={() => setSortMode(c => c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest')}>
           Сортировка: {sortLabel}
         </Button>
       </Flex>
 
+      {/* Остальная часть с постами */}
       <Container size="xl" px={0} py={0}>
         <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
-          {columns.map((column, columnIndex) => (
-            <Box
-              key={columnIndex}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}
-            >
-              {column.map((post, index) => (
-                <MediaCard
-                  key={`${post.id}-${columnIndex}-${index}`}
-                  post={post}
-                  columnIndex={columnIndex}
-                  index={index}
-                />
+          {columns.map((column, i) => (
+            <Box key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {column.map((post, idx) => (
+                <MediaCard key={post.id} post={post} columnIndex={i} index={idx} />
               ))}
             </Box>
           ))}
         </Flex>
-
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      <Text ta="center" c="dimmed" mt={60} size="sm">
-        3 колонки • images + videos + gif
-      </Text>
-
-      {loading && <Text ta="center" c="dimmed" mt={12}>Загружаю...</Text>}
-      {!hasMore && <Text ta="center" c="dimmed" mt={12}>Больше постов нет</Text>}
+      {loading && <Text ta="center" mt={20}>Загружаю...</Text>}
     </Box>
   );
 }
