@@ -10,7 +10,6 @@ import {
   Title,
 } from '@mantine/core';
 import '@mantine/core/styles.css';
-import classes from './Home.module.scss';
 
 type Post = {
   id: number;
@@ -61,13 +60,15 @@ function buildColumns(items: Post[], count: number) {
   return columns;
 }
 
+function extractTagName(option: string) {
+  return option.replace(/\s*\(\d+\)\s*$/, '').trim();
+}
+
 type MediaCardProps = {
   post: Post;
-  columnIndex: number;
-  index: number;
 };
 
-function MediaCard({ post, columnIndex, index }: MediaCardProps) {
+function MediaCard({ post }: MediaCardProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -106,17 +107,67 @@ function MediaCard({ post, columnIndex, index }: MediaCardProps) {
 
   return (
     <Box style={{ padding: 4, boxSizing: 'border-box' }}>
-      <Box ref={wrapperRef} style={{ width: '100%', aspectRatio: `${w} / ${h}`, maxHeight: MAX_CARD_HEIGHT, overflow: 'hidden', backgroundColor: '#111', borderRadius: 6, position: 'relative' }}>
+      <Box
+        ref={wrapperRef}
+        style={{
+          width: '100%',
+          aspectRatio: `${w} / ${h}`,
+          maxHeight: MAX_CARD_HEIGHT,
+          overflow: 'hidden',
+          backgroundColor: '#111',
+          borderRadius: 6,
+          position: 'relative',
+        }}
+      >
         {(isVideo || isGif) && (
-          <Box style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, padding: '4px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.65)', color: 'white', fontSize: 12, fontWeight: 700 }}>
+          <Box
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              zIndex: 2,
+              padding: '4px 10px',
+              borderRadius: 999,
+              background: 'rgba(0,0,0,0.65)',
+              color: 'white',
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
             {isVideo ? 'Видео' : 'GIF'}
           </Box>
         )}
 
         {isVideo ? (
-          <video ref={videoRef} src={src} poster={previewUrl} muted loop playsInline onClick={() => window.open(originalSrc, '_blank')} style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }} />
+          <video
+            ref={videoRef}
+            src={src}
+            poster={previewUrl}
+            muted
+            loop
+            playsInline
+            onClick={() => window.open(originalSrc, '_blank')}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              cursor: 'pointer',
+            }}
+          />
         ) : (
-          <Box component="img" src={src} alt={`Post ${post.id}`} loading="lazy" onClick={() => window.open(originalSrc, '_blank')} style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }} />
+          <Box
+            component="img"
+            src={src}
+            alt={`Post ${post.id}`}
+            loading="lazy"
+            onClick={() => window.open(originalSrc, '_blank')}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              cursor: 'pointer',
+            }}
+          />
         )}
       </Box>
     </Box>
@@ -137,10 +188,7 @@ export default function Home() {
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // === ОТЛАДКА: основной useEffect для подсказок ===
   useEffect(() => {
-    console.log('🔍 useEffect сработал, tagInput =', tagInput); // ← должно появляться
-
     if (tagInput.trim().length < 2) {
       setSuggestions([]);
       return;
@@ -149,50 +197,48 @@ export default function Home() {
     const timer = setTimeout(async () => {
       try {
         const url = `${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`;
-        console.log('📡 Запрос к:', url);
-
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          console.log('✅ Получено подсказок:', data);
           setSuggestions(Array.isArray(data) ? data : []);
         }
       } catch (err) {
-        console.error('❌ Ошибка запроса тегов:', err);
+        console.error('Ошибка запроса тегов:', err);
       }
     }, 300);
 
     return () => clearTimeout(timer);
   }, [tagInput]);
 
-  // Применение тега
   useEffect(() => {
-    const timer = setTimeout(() => setAppliedTags(tagInput.trim()), 400);
+    const timer = setTimeout(() => {
+      setAppliedTags(extractTagName(tagInput.trim()));
+    }, 400);
+
     return () => clearTimeout(timer);
   }, [tagInput]);
 
-  // Сброс постов
   useEffect(() => {
     setPosts([]);
     setPage(0);
     setHasMore(true);
   }, [appliedTags, sortMode]);
 
-  // Загрузка постов (оставил как было)
   useEffect(() => {
-    // ... (твой код загрузки постов без изменений)
     const controller = new AbortController();
 
     async function load() {
       try {
         setLoading(true);
+
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
         if (appliedTags.trim()) url.searchParams.set('tags', appliedTags.trim());
 
         const res = await fetch(url.toString(), { signal: controller.signal });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('Failed to load posts');
+
         const data = await res.json();
         const list: Post[] = Array.isArray(data) ? data : [];
 
@@ -214,78 +260,115 @@ export default function Home() {
     return () => controller.abort();
   }, [page, appliedTags]);
 
-  // Infinite scroll
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading) setPage((p) => p + 1);
+        if (entries[0].isIntersecting && hasMore && !loading) {
+          setPage((p) => p + 1);
+        }
       },
       { rootMargin: '2000px 0px' }
     );
+
     observer.observe(el);
     return () => observer.disconnect();
   }, [hasMore, loading]);
 
-  const visiblePosts = useMemo(() => [...posts].sort((a, b) => {
-    if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
-    if (sortMode === 'top') return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
-    return (b.id ?? 0) - (a.id ?? 0);
-  }), [posts, sortMode]);
+  const visiblePosts = useMemo(
+    () =>
+      [...posts].sort((a, b) => {
+        if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
+        if (sortMode === 'top') {
+          return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
+        }
+        return (b.id ?? 0) - (a.id ?? 0);
+      }),
+    [posts, sortMode]
+  );
 
   const columns = useMemo(() => buildColumns(visiblePosts, 3), [visiblePosts]);
-  const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+  const sortLabel =
+    sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
       <Flex align="center" justify="space-between" p="md" gap="md" wrap="wrap">
-        <Title order={1} size="h2">Hentai Scroller</Title>
+        <Title order={1} size="h2">
+          Hentai Scroller
+        </Title>
 
         <Group gap="xl">
-          <Text component="a" href="#" c="white" td="none" fw={500}>🏠 Главная</Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>🔥 В тренде</Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>⭐ Лучшие</Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>
+            🏠 Главная
+          </Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>
+            🔥 В тренде
+          </Text>
+          <Text component="a" href="#" c="white" td="none" fw={500}>
+            ⭐ Лучшие
+          </Text>
         </Group>
 
         <Autocomplete
-          placeholder="Введите тег (например: anime, female)..."
+          placeholder="Введите тег (например: solo, female, anime)..."
           leftSection="🔎"
           value={tagInput}
-          onChange={(value) => {
-            console.log('⌨️ onChange вызван:', value); // ← самое важное!
-            setTagInput(value);
-          }}
+          onChange={setTagInput}
           data={suggestions}
           limit={10}
-          onOptionSubmit={(value) => {
-            setTagInput(value);
-            setAppliedTags(value);
+          onOptionSubmit={(item) => {
+            const cleanTag = extractTagName(item);
+            setTagInput(cleanTag);
+            setAppliedTags(cleanTag);
           }}
           w={360}
           radius="md"
+          styles={{
+            input: {
+              backgroundColor: '#1a1a1a',
+              borderColor: '#333',
+              color: 'white',
+            },
+          }}
         />
 
-        <Button color="pink" onClick={() => setSortMode(c => c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest')}>
+        <Button
+          color="pink"
+          onClick={() =>
+            setSortMode((c) =>
+              c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'
+            )
+          }
+        >
           Сортировка: {sortLabel}
         </Button>
       </Flex>
 
-      {/* Остальная часть с постами */}
       <Container size="xl" px={0} py={0}>
         <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
           {columns.map((column, i) => (
-            <Box key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
-              {column.map((post, idx) => (
-                <MediaCard key={post.id} post={post} columnIndex={i} index={idx} />
+            <Box
+              key={i}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}
+            >
+              {column.map((post) => (
+                <MediaCard key={post.id} post={post} />
               ))}
             </Box>
           ))}
         </Flex>
+
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {loading && <Text ta="center" mt={20}>Загружаю...</Text>}
+      {loading && (
+        <Text ta="center" mt={20}>
+          Загружаю...
+        </Text>
+      )}
     </Box>
   );
 }
