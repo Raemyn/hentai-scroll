@@ -364,7 +364,7 @@ export default function Home() {
 
     const tick = () => {
       const elapsed = performance.now() - startedAt;
-      const value = Math.min(95, (elapsed / 40000) * 100);
+      const value = Math.min(95, (elapsed / 24000) * 100);
       setLoadingProgress(value);
       progressRafRef.current = requestAnimationFrame(tick);
     };
