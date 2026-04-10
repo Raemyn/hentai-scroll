@@ -3,6 +3,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  CloseButton,
   Container,
   Flex,
   Group,
@@ -62,6 +63,18 @@ function buildColumns(items: Post[], count: number) {
 
 function extractTagName(option: string) {
   return option.replace(/\s*\(\d+\)\s*$/, '').trim();
+}
+
+function normalizeSuggestion(item: unknown): string {
+  if (typeof item === 'string') return item;
+
+  if (item && typeof item === 'object') {
+    const value = item as { label?: unknown; value?: unknown };
+    if (typeof value.label === 'string' && value.label.trim()) return value.label;
+    if (typeof value.value === 'string' && value.value.trim()) return value.value;
+  }
+
+  return '';
 }
 
 type MediaCardProps = {
@@ -180,13 +193,49 @@ export default function Home() {
   const [hasMore, setHasMore] = useState(true);
 
   const [tagInput, setTagInput] = useState('');
-  const [appliedTags, setAppliedTags] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
+  const [onlyVideos, setOnlyVideos] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [page, setPage] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const suppressNextInputChangeRef = useRef(false);
+
+  const appliedTags = useMemo(() => selectedTags.join(' '), [selectedTags]);
+
+  function clearSearchInput() {
+    suppressNextInputChangeRef.current = true;
+
+    setTagInput('');
+    setSuggestions([]);
+
+    setTimeout(() => {
+      setTagInput('');
+      setSuggestions([]);
+      suppressNextInputChangeRef.current = false;
+    }, 0);
+  }
+
+  function addTag(rawTag: string) {
+    const cleanTag = extractTagName(rawTag);
+    if (!cleanTag) {
+      clearSearchInput();
+      return;
+    }
+
+    setSelectedTags((prev) => {
+      if (prev.includes(cleanTag)) return prev;
+      return [...prev, cleanTag];
+    });
+
+    clearSearchInput();
+  }
+
+  function removeTag(tagToRemove: string) {
+    setSelectedTags((prev) => prev.filter((tag) => tag !== tagToRemove));
+  }
 
   useEffect(() => {
     if (tagInput.trim().length < 2) {
@@ -198,22 +247,23 @@ export default function Home() {
       try {
         const url = `${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`;
         const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          setSuggestions(Array.isArray(data) ? data : []);
+
+        if (!res.ok) {
+          setSuggestions([]);
+          return;
         }
+
+        const data = await res.json();
+        const normalized = Array.isArray(data)
+          ? data.map(normalizeSuggestion).filter(Boolean)
+          : [];
+
+        setSuggestions(normalized);
       } catch (err) {
         console.error('Ошибка запроса тегов:', err);
+        setSuggestions([]);
       }
     }, 300);
-
-    return () => clearTimeout(timer);
-  }, [tagInput]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setAppliedTags(extractTagName(tagInput.trim()));
-    }, 400);
 
     return () => clearTimeout(timer);
   }, [tagInput]);
@@ -222,7 +272,7 @@ export default function Home() {
     setPosts([]);
     setPage(0);
     setHasMore(true);
-  }, [appliedTags, sortMode]);
+  }, [appliedTags, sortMode, onlyVideos]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -235,6 +285,7 @@ export default function Home() {
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
         if (appliedTags.trim()) url.searchParams.set('tags', appliedTags.trim());
+        if (onlyVideos) url.searchParams.set('onlyVideos', '1');
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) throw new Error('Failed to load posts');
@@ -258,7 +309,7 @@ export default function Home() {
 
     load();
     return () => controller.abort();
-  }, [page, appliedTags]);
+  }, [page, appliedTags, onlyVideos]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -310,30 +361,88 @@ export default function Home() {
           <Text component="a" href="#" c="white" td="none" fw={500}>
             ⭐ Лучшие
           </Text>
+
+          <Text
+            onClick={() => setOnlyVideos((v) => !v)}
+            style={{
+              cursor: 'pointer',
+              padding: '6px 12px',
+              borderRadius: 999,
+              fontWeight: 600,
+              transition: 'all 0.2s ease',
+              background: onlyVideos ? '#ff4d6d' : 'transparent',
+              color: onlyVideos ? 'white' : '#aaa',
+              border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
+            }}
+            onMouseEnter={(e) => {
+              if (!onlyVideos) e.currentTarget.style.color = 'white';
+            }}
+            onMouseLeave={(e) => {
+              if (!onlyVideos) e.currentTarget.style.color = '#aaa';
+            }}
+          >
+            🎬 Только видео
+          </Text>
         </Group>
 
-        <Autocomplete
-          placeholder="Введите тег (например: solo, female, anime)..."
-          leftSection="🔎"
-          value={tagInput}
-          onChange={setTagInput}
-          data={suggestions}
-          limit={10}
-          onOptionSubmit={(item) => {
-            const cleanTag = extractTagName(item);
-            setTagInput(cleanTag);
-            setAppliedTags(cleanTag);
-          }}
-          w={360}
-          radius="md"
-          styles={{
-            input: {
-              backgroundColor: '#1a1a1a',
-              borderColor: '#333',
-              color: 'white',
-            },
-          }}
-        />
+        <Box w={360}>
+          {selectedTags.length > 0 && (
+            <Group gap={8} wrap="wrap" mb={8}>
+              {selectedTags.map((tag) => (
+                <Box
+                  key={tag}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 10px',
+                    borderRadius: 999,
+                    background: '#1a1a1a',
+                    border: '1px solid #333',
+                    color: 'white',
+                  }}
+                >
+                  <Text size="sm" fw={600}>
+                    {tag}
+                  </Text>
+                  <CloseButton
+                    size="sm"
+                    onClick={() => removeTag(tag)}
+                    aria-label={`Удалить тег ${tag}`}
+                  />
+                </Box>
+              ))}
+            </Group>
+          )}
+
+          <Autocomplete
+            placeholder="Введите тег и нажмите Enter..."
+            leftSection="🔎"
+            value={tagInput}
+            onChange={(value) => {
+              if (suppressNextInputChangeRef.current) return;
+              setTagInput(value);
+            }}
+            data={suggestions}
+            limit={10}
+            onOptionSubmit={(item) => addTag(item)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                addTag(tagInput);
+              }
+            }}
+            w={360}
+            radius="md"
+            styles={{
+              input: {
+                backgroundColor: '#1a1a1a',
+                borderColor: '#333',
+                color: 'white',
+              },
+            }}
+          />
+        </Box>
 
         <Button
           color="pink"
