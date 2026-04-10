@@ -11,6 +11,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
+import { IconChevronDown } from '@tabler/icons-react';
 import '@mantine/core/styles.css';
 
 type Post = {
@@ -190,6 +191,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
+  const [loadingProgress, setLoadingProgress] = useState(0);
+
   const [tagInput, setTagInput] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -197,12 +200,15 @@ export default function Home() {
   const [onlyVideos, setOnlyVideos] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [page, setPage] = useState(0);
+  const [searchOpened, setSearchOpened] = useState(false);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const suppressNextInputChangeRef = useRef(false);
+  const progressRafRef = useRef<number | null>(null);
 
   const appliedTags = useMemo(() => selectedTags.join(' '), [selectedTags]);
 
+  const isMobile = useMediaQuery('(max-width: 750px)');
   const is3Col = useMediaQuery('(min-width: 1100px)');
   const is2Col = useMediaQuery('(min-width: 750px)');
   const columnCount = is3Col ? 3 : is2Col ? 2 : 1;
@@ -243,6 +249,10 @@ export default function Home() {
 
     setSelectedTags((prev) => (prev.includes(cleanTag) ? prev : [...prev, cleanTag]));
     clearSearchInput();
+
+    if (isMobile) {
+      setSearchOpened(false);
+    }
   }
 
   function removeTag(tagToRemove: string) {
@@ -333,7 +343,111 @@ export default function Home() {
     return () => observer.disconnect();
   }, [hasMore, loading]);
 
-  const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+  useEffect(() => {
+    if (!loading) {
+      if (progressRafRef.current !== null) {
+        cancelAnimationFrame(progressRafRef.current);
+        progressRafRef.current = null;
+      }
+
+      setLoadingProgress(100);
+
+      const timer = window.setTimeout(() => {
+        setLoadingProgress(0);
+      }, 250);
+
+      return () => window.clearTimeout(timer);
+    }
+
+    const startedAt = performance.now();
+    setLoadingProgress(0);
+
+    const tick = () => {
+      const elapsed = performance.now() - startedAt;
+      const value = Math.min(95, (elapsed / 40000) * 100);
+      setLoadingProgress(value);
+      progressRafRef.current = requestAnimationFrame(tick);
+    };
+
+    progressRafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (progressRafRef.current !== null) {
+        cancelAnimationFrame(progressRafRef.current);
+        progressRafRef.current = null;
+      }
+    };
+  }, [loading]);
+
+  const sortLabel =
+    sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+
+  const SearchPanel = (
+    <Box
+      style={{
+        width: '100%',
+        maxWidth: 420,
+      }}
+    >
+      {selectedTags.length > 0 && (
+        <Group gap={8} wrap="wrap" mb={8}>
+          {selectedTags.map((tag) => (
+            <Box
+              key={tag}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                borderRadius: 999,
+                background: '#1a1a1a',
+                border: '1px solid #333',
+                color: 'white',
+              }}
+            >
+              <Text size="sm" fw={600}>
+                {tag}
+              </Text>
+              <CloseButton size="sm" onClick={() => removeTag(tag)} />
+            </Box>
+          ))}
+        </Group>
+      )}
+
+      <Autocomplete
+        placeholder="Введите тег и нажмите Enter..."
+        leftSection="🔎"
+        value={tagInput}
+        onChange={(value) => {
+          if (suppressNextInputChangeRef.current) return;
+          setTagInput(value);
+        }}
+        data={suggestions}
+        limit={10}
+        onOptionSubmit={addTag}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            addTag(tagInput);
+          }
+        }}
+        w="100%"
+        radius="md"
+        styles={{
+          input: {
+            backgroundColor: '#1a1a1a',
+            borderColor: '#333',
+            color: 'white',
+          },
+          dropdown: {
+            backgroundColor: '#111',
+            borderColor: '#333',
+            color: 'white',
+          },
+        }}
+      />
+    </Box>
+  );
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
@@ -346,97 +460,95 @@ export default function Home() {
           borderBottom: '1px solid #222',
         }}
       >
-        <Flex
-          align="center"
-          justify="space-between"
-          p="xs"
-          px="md"
-          gap="sm"
-          wrap="wrap"
-        >
-          <Title order={2} size="h4">
-            Hentai Scroller
-          </Title>
+        <Container size="xl" px="md" py="sm">
+          <Flex align="center" justify="space-between" gap="sm" style={{ width: '100%' }}>
+            <Box style={{ width: 72 }} />
 
-          <Group gap="sm">
-            <Text
-              onClick={() => setOnlyVideos((v) => !v)}
+            <Group
+              gap={8}
+              align="center"
+              justify="center"
+              style={{ flex: 1, cursor: 'pointer' }}
+              onClick={() => setSearchOpened((o) => !o)}
+            >
+              <Title order={2} size="h4" style={{ textAlign: 'center' }}>
+                Hentai Scroller
+              </Title>
+
+              <Box
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transform: searchOpened ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s ease',
+                  userSelect: 'none',
+                }}
+                aria-label="Открыть меню"
+                role="button"
+              >
+                <IconChevronDown size={20} stroke={2.2} />
+              </Box>
+            </Group>
+
+            <Box style={{ width: 72 }} />
+          </Flex>
+
+          <Box
+            style={{
+              maxHeight: searchOpened ? 220 : 0,
+              overflow: 'hidden',
+              transition: 'max-height 0.3s ease',
+            }}
+          >
+            <Box
+              mt="sm"
+              p="sm"
               style={{
-                cursor: 'pointer',
-                padding: '6px 12px',
-                borderRadius: 999,
-                fontWeight: 600,
-                transition: 'all 0.2s ease',
-                background: onlyVideos ? '#ff4d6d' : 'transparent',
-                color: onlyVideos ? 'white' : '#aaa',
-                border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
+                width: '100%',
+                background: '#111',
+                borderRadius: 12,
+                border: '1px solid #222',
+                opacity: searchOpened ? 1 : 0,
+                transform: searchOpened ? 'translateY(0)' : 'translateY(-10px)',
+                transition: 'all 0.3s ease',
               }}
             >
-              🎬 Только видео
-            </Text>
+              <Flex gap="sm" align="center" justify="center" wrap="wrap" mb="sm">
+                <Text
+                  onClick={() => setOnlyVideos((v) => !v)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '6px 12px',
+                    borderRadius: 999,
+                    fontWeight: 600,
+                    transition: 'all 0.2s ease',
+                    background: onlyVideos ? '#ff4d6d' : 'transparent',
+                    color: onlyVideos ? 'white' : '#aaa',
+                    border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
+                    userSelect: 'none',
+                  }}
+                >
+                  🎬 Только видео
+                </Text>
 
-            <Button
-              color="pink"
-              size="sm"
-              onClick={() =>
-                setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))
-              }
-            >
-              Сортировка: {sortLabel}
-            </Button>
-          </Group>
+                <Button
+                  color="pink"
+                  size="sm"
+                  onClick={() =>
+                    setSortMode((c) =>
+                      c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'
+                    )
+                  }
+                >
+                  Сортировка: {sortLabel}
+                </Button>
+              </Flex>
 
-          <Box w={360}>
-            {selectedTags.length > 0 && (
-              <Group gap={8} wrap="wrap" mb={8}>
-                {selectedTags.map((tag) => (
-                  <Box
-                    key={tag}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 10px',
-                      borderRadius: 999,
-                      background: '#1a1a1a',
-                      border: '1px solid #333',
-                      color: 'white',
-                    }}
-                  >
-                    <Text size="sm" fw={600}>
-                      {tag}
-                    </Text>
-                    <CloseButton size="sm" onClick={() => removeTag(tag)} />
-                  </Box>
-                ))}
-              </Group>
-            )}
-
-            <Autocomplete
-              placeholder="Введите тег и нажмите Enter..."
-              leftSection="🔎"
-              value={tagInput}
-              onChange={(value) => {
-                if (suppressNextInputChangeRef.current) return;
-                setTagInput(value);
-              }}
-              data={suggestions}
-              limit={10}
-              onOptionSubmit={addTag}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addTag(tagInput);
-                }
-              }}
-              w={360}
-              radius="md"
-              styles={{
-                input: { backgroundColor: '#1a1a1a', borderColor: '#333', color: 'white' },
-              }}
-            />
+              <Flex justify="center">{SearchPanel}</Flex>
+            </Box>
           </Box>
-        </Flex>
+        </Container>
       </Box>
 
       <Container size="xl" px={0} py={0}>
@@ -453,10 +565,36 @@ export default function Home() {
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {loading && (
-        <Text ta="center" mt={20}>
-          Загружаю...
-        </Text>
+      {(loading || loadingProgress > 0) && (
+        <Box mt={20} mx="auto" style={{ width: 'min(420px, 92vw)' }}>
+          <Flex justify="space-between" mb={6}>
+            <Text size="sm" c="#aaa" fw={600}>
+              Загружаю...
+            </Text>
+            <Text size="sm" c="#aaa" fw={600}>
+              {Math.round(loadingProgress)}%
+            </Text>
+          </Flex>
+
+          <Box
+            style={{
+              height: 8,
+              background: '#1a1a1a',
+              border: '1px solid #333',
+              borderRadius: 999,
+              overflow: 'hidden',
+            }}
+          >
+            <Box
+              style={{
+                height: '100%',
+                width: `${loadingProgress}%`,
+                background: 'linear-gradient(90deg, #ff4d6d, #ff7aa2)',
+                transition: 'width 0.12s linear',
+              }}
+            />
+          </Box>
+        </Box>
       )}
     </Box>
   );
