@@ -1,10 +1,13 @@
+import 'dotenv/config';
 import fastify from 'fastify';
 import cors from '@fastify/cors';
 
 const server = fastify({ logger: true });
 
 async function start() {
-  await server.register(cors, { origin: '*' });
+  await server.register(cors, {
+    origin: true,
+  });
 
   server.get('/api/posts', async (request, reply) => {
     const { limit = '15', pid = '0', tags = '', onlyVideos = '0' } = request.query as any;
@@ -20,9 +23,8 @@ async function start() {
       q: 'index',
       json: '1',
       limit: '100',
-      user_id: '6083293',
-      api_key:
-        '335eb8b2d26006a378a4f68035f914eef2cfa8cffa669019d355d0d85ce211cd9a48f555bd378f1812b3bd11525eac159af1f3cd2d93828e032504f6dfb4d9cd',
+      user_id: process.env.RULE34_USER_ID ?? '',
+      api_key: process.env.RULE34_API_KEY ?? '',
     };
 
     function isVideo(post: any) {
@@ -122,7 +124,8 @@ async function start() {
     }
   });
 
-  await server.listen({ port: 3001, host: '0.0.0.0' });
+  const port = Number(process.env.PORT) || 3001;
+  await server.listen({ port, host: '0.0.0.0' });
   console.log('🚀 Сервер запущен');
 }
 
