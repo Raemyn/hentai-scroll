@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   Autocomplete,
   Box,
@@ -67,19 +68,15 @@ function extractTagName(option: string) {
 
 function normalizeSuggestion(item: unknown): string {
   if (typeof item === 'string') return item;
-
   if (item && typeof item === 'object') {
     const value = item as { label?: unknown; value?: unknown };
     if (typeof value.label === 'string' && value.label.trim()) return value.label;
     if (typeof value.value === 'string' && value.value.trim()) return value.value;
   }
-
   return '';
 }
 
-type MediaCardProps = {
-  post: Post;
-};
+type MediaCardProps = { post: Post };
 
 function MediaCard({ post }: MediaCardProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -100,6 +97,7 @@ function MediaCard({ post }: MediaCardProps) {
 
   useEffect(() => {
     if (!isVideo) return;
+
     const el = wrapperRef.current;
     const video = videoRef.current;
     if (!el || !video) return;
@@ -155,7 +153,7 @@ function MediaCard({ post }: MediaCardProps) {
           <video
             ref={videoRef}
             src={src}
-            poster={previewUrl}
+            poster={previewUrl || undefined}
             muted
             loop
             playsInline
@@ -205,13 +203,30 @@ export default function Home() {
 
   const appliedTags = useMemo(() => selectedTags.join(' '), [selectedTags]);
 
+  const is3Col = useMediaQuery('(min-width: 1100px)');
+  const is2Col = useMediaQuery('(min-width: 750px)');
+  const columnCount = is3Col ? 3 : is2Col ? 2 : 1;
+
+  const visiblePosts = useMemo(
+    () =>
+      [...posts].sort((a, b) => {
+        if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
+        if (sortMode === 'top') {
+          return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
+        }
+        return (b.id ?? 0) - (a.id ?? 0);
+      }),
+    [posts, sortMode]
+  );
+
+  const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
+
   function clearSearchInput() {
     suppressNextInputChangeRef.current = true;
-
     setTagInput('');
     setSuggestions([]);
 
-    setTimeout(() => {
+    window.setTimeout(() => {
       setTagInput('');
       setSuggestions([]);
       suppressNextInputChangeRef.current = false;
@@ -220,16 +235,13 @@ export default function Home() {
 
   function addTag(rawTag: string) {
     const cleanTag = extractTagName(rawTag);
+
     if (!cleanTag) {
       clearSearchInput();
       return;
     }
 
-    setSelectedTags((prev) => {
-      if (prev.includes(cleanTag)) return prev;
-      return [...prev, cleanTag];
-    });
-
+    setSelectedTags((prev) => (prev.includes(cleanTag) ? prev : [...prev, cleanTag]));
     clearSearchInput();
   }
 
@@ -243,36 +255,29 @@ export default function Home() {
       return;
     }
 
-    const timer = setTimeout(async () => {
+    const timer = window.setTimeout(async () => {
       try {
-        const url = `${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`;
-        const res = await fetch(url);
-
+        const res = await fetch(`${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`);
         if (!res.ok) {
           setSuggestions([]);
           return;
         }
 
         const data = await res.json();
-        const normalized = Array.isArray(data)
-          ? data.map(normalizeSuggestion).filter(Boolean)
-          : [];
-
-        setSuggestions(normalized);
-      } catch (err) {
-        console.error('Ошибка запроса тегов:', err);
+        setSuggestions(Array.isArray(data) ? data.map(normalizeSuggestion).filter(Boolean) : []);
+      } catch {
         setSuggestions([]);
       }
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => window.clearTimeout(timer);
   }, [tagInput]);
 
   useEffect(() => {
     setPosts([]);
     setPage(0);
     setHasMore(true);
-  }, [appliedTags, sortMode, onlyVideos]);
+  }, [appliedTags, onlyVideos]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -284,14 +289,14 @@ export default function Home() {
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
+
         if (appliedTags.trim()) url.searchParams.set('tags', appliedTags.trim());
         if (onlyVideos) url.searchParams.set('onlyVideos', '1');
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) throw new Error('Failed to load posts');
 
-        const data = await res.json();
-        const list: Post[] = Array.isArray(data) ? data : [];
+        const list: Post[] = (await res.json()) || [];
 
         setPosts((prev) => {
           const merged = page === 0 ? list : [...prev, ...list];
@@ -328,141 +333,116 @@ export default function Home() {
     return () => observer.disconnect();
   }, [hasMore, loading]);
 
-  const visiblePosts = useMemo(
-    () =>
-      [...posts].sort((a, b) => {
-        if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
-        if (sortMode === 'top') {
-          return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
-        }
-        return (b.id ?? 0) - (a.id ?? 0);
-      }),
-    [posts, sortMode]
-  );
-
-  const columns = useMemo(() => buildColumns(visiblePosts, 3), [visiblePosts]);
-  const sortLabel =
-    sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+  const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
-      <Flex align="center" justify="space-between" p="md" gap="md" wrap="wrap">
-        <Title order={1} size="h2">
-          Hentai Scroller
-        </Title>
-
-        <Group gap="xl">
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            🏠 Главная
-          </Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            🔥 В тренде
-          </Text>
-          <Text component="a" href="#" c="white" td="none" fw={500}>
-            ⭐ Лучшие
-          </Text>
-
-          <Text
-            onClick={() => setOnlyVideos((v) => !v)}
-            style={{
-              cursor: 'pointer',
-              padding: '6px 12px',
-              borderRadius: 999,
-              fontWeight: 600,
-              transition: 'all 0.2s ease',
-              background: onlyVideos ? '#ff4d6d' : 'transparent',
-              color: onlyVideos ? 'white' : '#aaa',
-              border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
-            }}
-            onMouseEnter={(e) => {
-              if (!onlyVideos) e.currentTarget.style.color = 'white';
-            }}
-            onMouseLeave={(e) => {
-              if (!onlyVideos) e.currentTarget.style.color = '#aaa';
-            }}
-          >
-            🎬 Только видео
-          </Text>
-        </Group>
-
-        <Box w={360}>
-          {selectedTags.length > 0 && (
-            <Group gap={8} wrap="wrap" mb={8}>
-              {selectedTags.map((tag) => (
-                <Box
-                  key={tag}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    background: '#1a1a1a',
-                    border: '1px solid #333',
-                    color: 'white',
-                  }}
-                >
-                  <Text size="sm" fw={600}>
-                    {tag}
-                  </Text>
-                  <CloseButton
-                    size="sm"
-                    onClick={() => removeTag(tag)}
-                    aria-label={`Удалить тег ${tag}`}
-                  />
-                </Box>
-              ))}
-            </Group>
-          )}
-
-          <Autocomplete
-            placeholder="Введите тег и нажмите Enter..."
-            leftSection="🔎"
-            value={tagInput}
-            onChange={(value) => {
-              if (suppressNextInputChangeRef.current) return;
-              setTagInput(value);
-            }}
-            data={suggestions}
-            limit={10}
-            onOptionSubmit={(item) => addTag(item)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                addTag(tagInput);
-              }
-            }}
-            w={360}
-            radius="md"
-            styles={{
-              input: {
-                backgroundColor: '#1a1a1a',
-                borderColor: '#333',
-                color: 'white',
-              },
-            }}
-          />
-        </Box>
-
-        <Button
-          color="pink"
-          onClick={() =>
-            setSortMode((c) =>
-              c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'
-            )
-          }
+      <Box
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+          backgroundColor: '#0a0a0a',
+          borderBottom: '1px solid #222',
+        }}
+      >
+        <Flex
+          align="center"
+          justify="space-between"
+          p="xs"
+          px="md"
+          gap="sm"
+          wrap="wrap"
         >
-          Сортировка: {sortLabel}
-        </Button>
-      </Flex>
+          <Title order={2} size="h4">
+            Hentai Scroller
+          </Title>
+
+          <Group gap="sm">
+            <Text
+              onClick={() => setOnlyVideos((v) => !v)}
+              style={{
+                cursor: 'pointer',
+                padding: '6px 12px',
+                borderRadius: 999,
+                fontWeight: 600,
+                transition: 'all 0.2s ease',
+                background: onlyVideos ? '#ff4d6d' : 'transparent',
+                color: onlyVideos ? 'white' : '#aaa',
+                border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
+              }}
+            >
+              🎬 Только видео
+            </Text>
+
+            <Button
+              color="pink"
+              size="sm"
+              onClick={() =>
+                setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))
+              }
+            >
+              Сортировка: {sortLabel}
+            </Button>
+          </Group>
+
+          <Box w={360}>
+            {selectedTags.length > 0 && (
+              <Group gap={8} wrap="wrap" mb={8}>
+                {selectedTags.map((tag) => (
+                  <Box
+                    key={tag}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 10px',
+                      borderRadius: 999,
+                      background: '#1a1a1a',
+                      border: '1px solid #333',
+                      color: 'white',
+                    }}
+                  >
+                    <Text size="sm" fw={600}>
+                      {tag}
+                    </Text>
+                    <CloseButton size="sm" onClick={() => removeTag(tag)} />
+                  </Box>
+                ))}
+              </Group>
+            )}
+
+            <Autocomplete
+              placeholder="Введите тег и нажмите Enter..."
+              leftSection="🔎"
+              value={tagInput}
+              onChange={(value) => {
+                if (suppressNextInputChangeRef.current) return;
+                setTagInput(value);
+              }}
+              data={suggestions}
+              limit={10}
+              onOptionSubmit={addTag}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addTag(tagInput);
+                }
+              }}
+              w={360}
+              radius="md"
+              styles={{
+                input: { backgroundColor: '#1a1a1a', borderColor: '#333', color: 'white' },
+              }}
+            />
+          </Box>
+        </Flex>
+      </Box>
 
       <Container size="xl" px={0} py={0}>
         <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
           {columns.map((column, i) => (
-            <Box
-              key={i}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}
-            >
+            <Box key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
               {column.map((post) => (
                 <MediaCard key={post.id} post={post} />
               ))}
