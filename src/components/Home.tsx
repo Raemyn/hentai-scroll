@@ -201,6 +201,10 @@ export default function Home() {
   const [page, setPage] = useState(0);
   const [searchOpened, setSearchOpened] = useState(false);
 
+  // ─────── Логика показа игры только после 4 секунд ───────
+  const [showFullGame, setShowFullGame] = useState(false);
+  const gameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // ← ИСПРАВЛЕНО
+
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const suppressNextInputChangeRef = useRef(false);
 
@@ -225,6 +229,25 @@ export default function Home() {
 
   const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
 
+  // Управление показом игры
+  useEffect(() => {
+    if (loading) {
+      gameTimeoutRef.current = setTimeout(() => {
+        setShowFullGame(true);
+      }, 4000);
+    } else {
+      if (gameTimeoutRef.current) {
+        clearTimeout(gameTimeoutRef.current);
+        gameTimeoutRef.current = null;
+      }
+      setShowFullGame(false);
+    }
+
+    return () => {
+      if (gameTimeoutRef.current) clearTimeout(gameTimeoutRef.current);
+    };
+  }, [loading]);
+
   function clearSearchInput() {
     suppressNextInputChangeRef.current = true;
     setTagInput('');
@@ -239,7 +262,6 @@ export default function Home() {
 
   function addTag(rawTag: string) {
     const cleanTag = extractTagName(rawTag);
-
     if (!cleanTag) {
       clearSearchInput();
       return;
@@ -248,9 +270,7 @@ export default function Home() {
     setSelectedTags((prev) => (prev.includes(cleanTag) ? prev : [...prev, cleanTag]));
     clearSearchInput();
 
-    if (isMobile) {
-      setSearchOpened(false);
-    }
+    if (isMobile) setSearchOpened(false);
   }
 
   function removeTag(tagToRemove: string) {
@@ -266,11 +286,7 @@ export default function Home() {
     const timer = window.setTimeout(async () => {
       try {
         const res = await fetch(`${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`);
-        if (!res.ok) {
-          setSuggestions([]);
-          return;
-        }
-
+        if (!res.ok) return setSuggestions([]);
         const data = await res.json();
         setSuggestions(Array.isArray(data) ? data.map(normalizeSuggestion).filter(Boolean) : []);
       } catch {
@@ -287,14 +303,12 @@ export default function Home() {
     setHasMore(true);
   }, [appliedTags, onlyVideos]);
 
-  // ─────── РЕАЛЬНАЯ ЗАГРУЗКА С СЕРВЕРА ───────
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
         setLoading(true);
-
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
@@ -303,9 +317,9 @@ export default function Home() {
         if (onlyVideos) url.searchParams.set('onlyVideos', '1');
 
         const res = await fetch(url.toString(), { signal: controller.signal });
-        if (!res.ok) throw new Error('Failed to load posts');
+        if (!res.ok) throw new Error();
 
-        const list: Post[] = (await res.json()) || [];
+        const list: Post[] = await res.json() || [];
 
         setPosts((prev) => {
           const merged = page === 0 ? list : [...prev, ...list];
@@ -321,12 +335,10 @@ export default function Home() {
       }
     }
 
-    load(); // ← теперь настоящая загрузка с сервера
-
+    load();
     return () => controller.abort();
   }, [page, appliedTags, onlyVideos]);
 
-  // ─────── БЕСКОНЕЧНЫЙ СКРОЛЛ ───────
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -344,16 +356,10 @@ export default function Home() {
     return () => observer.disconnect();
   }, [hasMore, loading]);
 
-  const sortLabel =
-    sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
+  const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
 
   const SearchPanel = (
-    <Box
-      style={{
-        width: '100%',
-        maxWidth: 420,
-      }}
-    >
+    <Box style={{ width: '100%', maxWidth: 420 }}>
       {selectedTags.length > 0 && (
         <Group gap={8} wrap="wrap" mb={8}>
           {selectedTags.map((tag) => (
@@ -370,9 +376,7 @@ export default function Home() {
                 color: 'white',
               }}
             >
-              <Text size="sm" fw={600}>
-                {tag}
-              </Text>
+              <Text size="sm" fw={600}>{tag}</Text>
               <CloseButton size="sm" onClick={() => removeTag(tag)} />
             </Box>
           ))}
@@ -398,23 +402,10 @@ export default function Home() {
         }}
         w="100%"
         radius="md"
-        comboboxProps={{
-          position: 'bottom',
-          middlewares: { flip: false, shift: false },
-        }}
+        comboboxProps={{ position: 'bottom', middlewares: { flip: false, shift: false } }}
         styles={{
-          input: {
-            backgroundColor: '#1a1a1a',
-            borderColor: '#333',
-            color: 'white',
-          },
-          dropdown: {
-            backgroundColor: '#1a1a1a',
-            borderColor: '#333',
-            color: '#ff00d4',
-            fontWeight: 600,
-            letterSpacing: '0.4px',
-          },
+          input: { backgroundColor: '#1a1a1a', borderColor: '#333', color: 'white' },
+          dropdown: { backgroundColor: '#1a1a1a', borderColor: '#333', color: '#ff00d4', fontWeight: 600 },
         }}
       />
     </Box>
@@ -422,100 +413,30 @@ export default function Home() {
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
-      <Box
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-          backgroundColor: '#0a0a0a',
-          borderBottom: '1px solid #222',
-        }}
-      >
+      {/* Хедер (без изменений) */}
+      <Box style={{ position: 'sticky', top: 0, zIndex: 100, backgroundColor: '#0a0a0a', borderBottom: '1px solid #222' }}>
         <Container size="xl" px="md" py="sm">
           <Flex align="center" justify="space-between" gap="sm" style={{ width: '100%' }}>
             <Box style={{ width: 72 }} />
-
-            <Group
-              gap={8}
-              align="center"
-              justify="center"
-              style={{ flex: 1, cursor: 'pointer' }}
-              onClick={() => setSearchOpened((o) => !o)}
-            >
-              <Title order={2} size="h4" style={{ textAlign: 'center' }}>
-                hentai-scroll
-              </Title>
-
-              <Box
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transform: searchOpened ? 'rotate(180deg)' : 'rotate(0deg)',
-                  transition: 'transform 0.2s ease',
-                  userSelect: 'none',
-                }}
-                aria-label="Открыть меню"
-                role="button"
-              >
+            <Group gap={8} align="center" justify="center" style={{ flex: 1, cursor: 'pointer' }} onClick={() => setSearchOpened((o) => !o)}>
+              <Title order={2} size="h4" style={{ textAlign: 'center' }}>hentai-scroll</Title>
+              <Box style={{ transform: searchOpened ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
                 <IconChevronDown size={20} stroke={2.2} />
               </Box>
             </Group>
-
             <Box style={{ width: 72 }} />
           </Flex>
 
-          <Box
-            style={{
-              maxHeight: searchOpened ? 220 : 0,
-              overflow: 'hidden',
-              transition: 'max-height 0.3s ease',
-            }}
-          >
-            <Box
-              mt="sm"
-              p="sm"
-              style={{
-                width: '100%',
-                background: '#111',
-                borderRadius: 12,
-                border: '1px solid #222',
-                opacity: searchOpened ? 1 : 0,
-                transform: searchOpened ? 'translateY(0)' : 'translateY(-10px)',
-                transition: 'all 0.3s ease',
-              }}
-            >
+          <Box style={{ maxHeight: searchOpened ? 220 : 0, overflow: 'hidden', transition: 'max-height 0.3s ease' }}>
+            <Box mt="sm" p="sm" style={{ background: '#111', borderRadius: 12, border: '1px solid #222' }}>
               <Flex gap="sm" align="center" justify="center" wrap="wrap" mb="sm">
-                <Text
-                  onClick={() => setOnlyVideos((v) => !v)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '6px 12px',
-                    borderRadius: 999,
-                    fontWeight: 600,
-                    transition: 'all 0.2s ease',
-                    background: onlyVideos ? '#ff4d6d' : 'transparent',
-                    color: onlyVideos ? 'white' : '#aaa',
-                    border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
-                    userSelect: 'none',
-                  }}
-                >
+                <Text onClick={() => setOnlyVideos((v) => !v)} style={{ cursor: 'pointer', padding: '6px 12px', borderRadius: 999, fontWeight: 600, background: onlyVideos ? '#ff4d6d' : 'transparent', color: onlyVideos ? 'white' : '#aaa' }}>
                   🎬 Только видео
                 </Text>
-
-                <Button
-                  color="pink"
-                  size="sm"
-                  onClick={() =>
-                    setSortMode((c) =>
-                      c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'
-                    )
-                  }
-                >
+                <Button color="pink" size="sm" onClick={() => setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))}>
                   Сортировка: {sortLabel}
                 </Button>
               </Flex>
-
               <Flex justify="center">{SearchPanel}</Flex>
             </Box>
           </Box>
@@ -526,19 +447,50 @@ export default function Home() {
         <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
           {columns.map((column, i) => (
             <Box key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
-              {column.map((post) => (
-                <MediaCard key={post.id} post={post} />
-              ))}
+              {column.map((post) => <MediaCard key={post.id} post={post} />)}
             </Box>
           ))}
         </Flex>
-
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {/* ИГРА ПОКАЗЫВАЕТСЯ ТОЛЬКО ПОКА ИДЁТ ЗАГРУЗКА С СЕРВЕРА */}
-      {/* Как только данные пришли — LoadingGame сразу исчезает */}
-      {loading && <LoadingGame />}
+      {/* Лоадер */}
+      {loading && (
+        <>
+          {!showFullGame && (
+            <Box
+              style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 10000,
+                backgroundColor: 'rgba(10, 10, 26, 0.95)',
+                padding: '20px 40px',
+                borderRadius: '9999px',
+                border: '2px solid #ff1493',
+                boxShadow: '0 0 30px #ff1493',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
+              <Text size="xl" fw={700} c="#ff1493" style={{ textShadow: '0 0 12px #ff1493', animation: 'pulse 1.2s infinite' }}>
+                Секунду...
+              </Text>
+            </Box>
+          )}
+          {showFullGame && <LoadingGame />}
+        </>
+      )}
+
+      <style>{`
+        @keyframes pulse {
+          0% { opacity: 1; }
+          50% { opacity: 0.4; }
+          100% { opacity: 1; }
+        }
+      `}</style>
     </Box>
   );
 }

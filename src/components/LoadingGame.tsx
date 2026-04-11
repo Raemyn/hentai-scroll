@@ -12,12 +12,12 @@ const PIPE_SPAWN_RATE = 1400;
 const GRAVITY = 0.05;
 const JUMP_STRENGTH = -2.2;
 const SPEED = 1.2;
-const LEVEL_DURATION = 16400;   // 16.4 секунды — прогресс-бар всегда идёт до конца
+const LEVEL_DURATION = 22400;   // 16.4 секунды — прогресс-бар всегда идёт до конца
 
 // ← НОВОЕ: точно 2 секунды до конца прогресс-бара
 const TIME_TO_SHOW_WIN_BEFORE_END = 2000;
 
-const CATGIRL_URL = '../../public/favicon.ico';
+const CATGIRL_URL = '/favicon.ico';
 
 type PipeData = {
     id: number;
