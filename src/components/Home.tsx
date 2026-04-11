@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import '@mantine/core/styles.css';
+import LoadingGame from './LoadingGame';
 
 type Post = {
   id: number;
@@ -105,7 +106,7 @@ function MediaCard({ post }: MediaCardProps) {
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) video.play().catch(() => {});
+        if (entry.isIntersecting) video.play().catch(() => { });
         else video.pause();
       },
       { rootMargin: '-20% 0px -20% 0px' }
@@ -191,8 +192,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
-  const [loadingProgress, setLoadingProgress] = useState(0);
-
   const [tagInput, setTagInput] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -204,7 +203,6 @@ export default function Home() {
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const suppressNextInputChangeRef = useRef(false);
-  const progressRafRef = useRef<number | null>(null);
 
   const appliedTags = useMemo(() => selectedTags.join(' '), [selectedTags]);
 
@@ -289,6 +287,7 @@ export default function Home() {
     setHasMore(true);
   }, [appliedTags, onlyVideos]);
 
+  // ─────── РЕАЛЬНАЯ ЗАГРУЗКА С СЕРВЕРА ───────
   useEffect(() => {
     const controller = new AbortController();
 
@@ -322,10 +321,12 @@ export default function Home() {
       }
     }
 
-    load();
+    load(); // ← теперь настоящая загрузка с сервера
+
     return () => controller.abort();
   }, [page, appliedTags, onlyVideos]);
 
+  // ─────── БЕСКОНЕЧНЫЙ СКРОЛЛ ───────
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -342,42 +343,6 @@ export default function Home() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [hasMore, loading]);
-
-  useEffect(() => {
-    if (!loading) {
-      if (progressRafRef.current !== null) {
-        cancelAnimationFrame(progressRafRef.current);
-        progressRafRef.current = null;
-      }
-
-      setLoadingProgress(100);
-
-      const timer = window.setTimeout(() => {
-        setLoadingProgress(0);
-      }, 250);
-
-      return () => window.clearTimeout(timer);
-    }
-
-    const startedAt = performance.now();
-    setLoadingProgress(0);
-
-    const tick = () => {
-      const elapsed = performance.now() - startedAt;
-      const value = Math.min(95, (elapsed / 24000) * 100);
-      setLoadingProgress(value);
-      progressRafRef.current = requestAnimationFrame(tick);
-    };
-
-    progressRafRef.current = requestAnimationFrame(tick);
-
-    return () => {
-      if (progressRafRef.current !== null) {
-        cancelAnimationFrame(progressRafRef.current);
-        progressRafRef.current = null;
-      }
-    };
-  }, [loading]);
 
   const sortLabel =
     sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
@@ -433,6 +398,10 @@ export default function Home() {
         }}
         w="100%"
         radius="md"
+        comboboxProps={{
+          position: 'bottom',
+          middlewares: { flip: false, shift: false },
+        }}
         styles={{
           input: {
             backgroundColor: '#1a1a1a',
@@ -440,9 +409,11 @@ export default function Home() {
             color: 'white',
           },
           dropdown: {
-            backgroundColor: '#111',
+            backgroundColor: '#1a1a1a',
             borderColor: '#333',
-            color: 'white',
+            color: '#ff00d4',
+            fontWeight: 600,
+            letterSpacing: '0.4px',
           },
         }}
       />
@@ -472,7 +443,7 @@ export default function Home() {
               onClick={() => setSearchOpened((o) => !o)}
             >
               <Title order={2} size="h4" style={{ textAlign: 'center' }}>
-                Hentai Scroller
+                hentai-scroll
               </Title>
 
               <Box
@@ -565,37 +536,9 @@ export default function Home() {
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {(loading || loadingProgress > 0) && (
-        <Box mt={20} mx="auto" style={{ width: 'min(420px, 92vw)' }}>
-          <Flex justify="space-between" mb={6}>
-            <Text size="sm" c="#aaa" fw={600}>
-              Загружаю...
-            </Text>
-            <Text size="sm" c="#aaa" fw={600}>
-              {Math.round(loadingProgress)}%
-            </Text>
-          </Flex>
-
-          <Box
-            style={{
-              height: 8,
-              background: '#1a1a1a',
-              border: '1px solid #333',
-              borderRadius: 999,
-              overflow: 'hidden',
-            }}
-          >
-            <Box
-              style={{
-                height: '100%',
-                width: `${loadingProgress}%`,
-                background: 'linear-gradient(90deg, #ff4d6d, #ff7aa2)',
-                transition: 'width 0.12s linear',
-              }}
-            />
-          </Box>
-        </Box>
-      )}
+      {/* ИГРА ПОКАЗЫВАЕТСЯ ТОЛЬКО ПОКА ИДЁТ ЗАГРУЗКА С СЕРВЕРА */}
+      {/* Как только данные пришли — LoadingGame сразу исчезает */}
+      {loading && <LoadingGame />}
     </Box>
   );
 }
