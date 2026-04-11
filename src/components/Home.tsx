@@ -460,26 +460,22 @@ export default function Home() {
           {!showFullGame && (
             <Box
               style={{
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                zIndex: 10000,
-                backgroundColor: 'rgba(10, 10, 26, 0.95)',
-                padding: '20px 40px',
-                borderRadius: '9999px',
-                border: '2px solid #ff1493',
-                boxShadow: '0 0 30px #ff1493',
+                position: 'relative',
+                zIndex: 5,
                 display: 'flex',
-                alignItems: 'center',
-                gap: 12,
+                justifyContent: 'center',
+                marginTop: 12,
+                marginBottom: 6,
+                opacity: 0.45,
+                pointerEvents: 'none',
               }}
             >
-              <Text size="xl" fw={700} c="#ff1493" style={{ textShadow: '0 0 12px #ff1493', animation: 'pulse 1.2s infinite' }}>
+              <Text size="xs" c="#aaa" fw={500} style={{ letterSpacing: 0.3 }}>
                 Секунду...
               </Text>
             </Box>
           )}
+
           {showFullGame && <LoadingGame />}
         </>
       )}
