@@ -234,7 +234,7 @@ export default function Home() {
     if (loading) {
       gameTimeoutRef.current = setTimeout(() => {
         setShowFullGame(true);
-      }, 4000);
+      }, 8000);
     } else {
       if (gameTimeoutRef.current) {
         clearTimeout(gameTimeoutRef.current);
