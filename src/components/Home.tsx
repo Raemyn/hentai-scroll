@@ -106,7 +106,7 @@ function MediaCard({ post }: MediaCardProps) {
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) video.play().catch(() => { });
+        if (entry.isIntersecting) video.play().catch(() => {});
         else video.pause();
       },
       { rootMargin: '-20% 0px -20% 0px' }
@@ -201,9 +201,8 @@ export default function Home() {
   const [page, setPage] = useState(0);
   const [searchOpened, setSearchOpened] = useState(false);
 
-  // ─────── Логика показа игры только после 4 секунд ───────
   const [showFullGame, setShowFullGame] = useState(false);
-  const gameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // ← ИСПРАВЛЕНО
+  const gameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const suppressNextInputChangeRef = useRef(false);
@@ -229,7 +228,6 @@ export default function Home() {
 
   const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
 
-  // Управление показом игры
   useEffect(() => {
     if (loading) {
       gameTimeoutRef.current = setTimeout(() => {
@@ -286,7 +284,11 @@ export default function Home() {
     const timer = window.setTimeout(async () => {
       try {
         const res = await fetch(`${API_URL}/api/tags?q=${encodeURIComponent(tagInput.trim())}`);
-        if (!res.ok) return setSuggestions([]);
+        if (!res.ok) {
+          setSuggestions([]);
+          return;
+        }
+
         const data = await res.json();
         setSuggestions(Array.isArray(data) ? data.map(normalizeSuggestion).filter(Boolean) : []);
       } catch {
@@ -309,17 +311,22 @@ export default function Home() {
     async function load() {
       try {
         setLoading(true);
+
         const url = new URL(`${API_URL}/api/posts`);
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
 
-        if (appliedTags.trim()) url.searchParams.set('tags', appliedTags.trim());
-        if (onlyVideos) url.searchParams.set('onlyVideos', '1');
+        const finalTags = [appliedTags.trim(), onlyVideos ? 'gif' : '']
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+
+        if (finalTags) url.searchParams.set('tags', finalTags);
 
         const res = await fetch(url.toString(), { signal: controller.signal });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error('Failed to load posts');
 
-        const list: Post[] = await res.json() || [];
+        const list: Post[] = (await res.json()) || [];
 
         setPosts((prev) => {
           const merged = page === 0 ? list : [...prev, ...list];
@@ -376,7 +383,9 @@ export default function Home() {
                 color: 'white',
               }}
             >
-              <Text size="sm" fw={600}>{tag}</Text>
+              <Text size="sm" fw={600}>
+                {tag}
+              </Text>
               <CloseButton size="sm" onClick={() => removeTag(tag)} />
             </Box>
           ))}
@@ -402,10 +411,19 @@ export default function Home() {
         }}
         w="100%"
         radius="md"
-        comboboxProps={{ position: 'bottom', middlewares: { flip: false, shift: false } }}
+        comboboxProps={{
+          position: 'bottom',
+          middlewares: { flip: false, shift: false },
+        }}
         styles={{
           input: { backgroundColor: '#1a1a1a', borderColor: '#333', color: 'white' },
-          dropdown: { backgroundColor: '#1a1a1a', borderColor: '#333', color: '#ff00d4', fontWeight: 600 },
+          dropdown: {
+            backgroundColor: '#1a1a1a',
+            borderColor: '#333',
+            color: '#ff00d4',
+            fontWeight: 600,
+            letterSpacing: '0.4px',
+          },
         }}
       />
     </Box>
@@ -413,30 +431,100 @@ export default function Home() {
 
   return (
     <Box bg="#0a0a0a" mih="100vh" c="white" pb={40}>
-      {/* Хедер (без изменений) */}
-      <Box style={{ position: 'sticky', top: 0, zIndex: 100, backgroundColor: '#0a0a0a', borderBottom: '1px solid #222' }}>
+      <Box
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+          backgroundColor: '#0a0a0a',
+          borderBottom: '1px solid #222',
+        }}
+      >
         <Container size="xl" px="md" py="sm">
           <Flex align="center" justify="space-between" gap="sm" style={{ width: '100%' }}>
             <Box style={{ width: 72 }} />
-            <Group gap={8} align="center" justify="center" style={{ flex: 1, cursor: 'pointer' }} onClick={() => setSearchOpened((o) => !o)}>
-              <Title order={2} size="h4" style={{ textAlign: 'center' }}>hentai-scroll</Title>
-              <Box style={{ transform: searchOpened ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+
+            <Group
+              gap={8}
+              align="center"
+              justify="center"
+              style={{ flex: 1, cursor: 'pointer' }}
+              onClick={() => setSearchOpened((o) => !o)}
+            >
+              <Title order={2} size="h4" style={{ textAlign: 'center' }}>
+                hentai-scroll
+              </Title>
+
+              <Box
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transform: searchOpened ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s ease',
+                  userSelect: 'none',
+                }}
+                aria-label="Открыть меню"
+                role="button"
+              >
                 <IconChevronDown size={20} stroke={2.2} />
               </Box>
             </Group>
+
             <Box style={{ width: 72 }} />
           </Flex>
 
-          <Box style={{ maxHeight: searchOpened ? 220 : 0, overflow: 'hidden', transition: 'max-height 0.3s ease' }}>
-            <Box mt="sm" p="sm" style={{ background: '#111', borderRadius: 12, border: '1px solid #222' }}>
+          <Box
+            style={{
+              maxHeight: searchOpened ? 220 : 0,
+              overflow: 'hidden',
+              transition: 'max-height 0.3s ease',
+            }}
+          >
+            <Box
+              mt="sm"
+              p="sm"
+              style={{
+                width: '100%',
+                background: '#111',
+                borderRadius: 12,
+                border: '1px solid #222',
+                opacity: searchOpened ? 1 : 0,
+                transform: searchOpened ? 'translateY(0)' : 'translateY(-10px)',
+                transition: 'all 0.3s ease',
+              }}
+            >
               <Flex gap="sm" align="center" justify="center" wrap="wrap" mb="sm">
-                <Text onClick={() => setOnlyVideos((v) => !v)} style={{ cursor: 'pointer', padding: '6px 12px', borderRadius: 999, fontWeight: 600, background: onlyVideos ? '#ff4d6d' : 'transparent', color: onlyVideos ? 'white' : '#aaa' }}>
+                <Text
+                  onClick={() => setOnlyVideos((v) => !v)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '6px 12px',
+                    borderRadius: 999,
+                    fontWeight: 600,
+                    transition: 'all 0.2s ease',
+                    background: onlyVideos ? '#ff4d6d' : 'transparent',
+                    color: onlyVideos ? 'white' : '#aaa',
+                    border: onlyVideos ? '1px solid #ff4d6d' : '1px solid transparent',
+                    userSelect: 'none',
+                  }}
+                >
                   🎬 Только видео
                 </Text>
-                <Button color="pink" size="sm" onClick={() => setSortMode((c) => (c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'))}>
+
+                <Button
+                  color="pink"
+                  size="sm"
+                  onClick={() =>
+                    setSortMode((c) =>
+                      c === 'newest' ? 'oldest' : c === 'oldest' ? 'top' : 'newest'
+                    )
+                  }
+                >
                   Сортировка: {sortLabel}
                 </Button>
               </Flex>
+
               <Flex justify="center">{SearchPanel}</Flex>
             </Box>
           </Box>
@@ -447,14 +535,16 @@ export default function Home() {
         <Flex align="flex-start" gap={0} style={{ width: '100%' }}>
           {columns.map((column, i) => (
             <Box key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
-              {column.map((post) => <MediaCard key={post.id} post={post} />)}
+              {column.map((post) => (
+                <MediaCard key={post.id} post={post} />
+              ))}
             </Box>
           ))}
         </Flex>
+
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {/* Лоадер */}
       {loading && (
         <>
           {!showFullGame && (
@@ -479,14 +569,6 @@ export default function Home() {
           {showFullGame && <LoadingGame />}
         </>
       )}
-
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.4; }
-          100% { opacity: 1; }
-        }
-      `}</style>
     </Box>
   );
 }

@@ -10,12 +10,11 @@ async function start() {
   });
 
   server.get('/api/posts', async (request, reply) => {
-    const { limit = '15', pid = '0', tags = '', onlyVideos = '0' } = request.query as any;
+    const { limit = '15', pid = '0', tags = '' } = request.query as any;
 
     const total = Number(limit) || 15;
     const startPage = Number(pid) || 0;
     const userTags = String(tags).trim();
-    const videosOnly = onlyVideos === '1' || onlyVideos === 'true';
 
     const baseParams: Record<string, string> = {
       page: 'dapi',
@@ -26,11 +25,6 @@ async function start() {
       user_id: process.env.RULE34_USER_ID ?? '',
       api_key: process.env.RULE34_API_KEY ?? '',
     };
-
-    function isVideo(post: any) {
-      const url = String(post.file_url || '').toLowerCase();
-      return url.endsWith('.mp4') || url.endsWith('.webm');
-    }
 
     async function fetchPage(page: number) {
       const params = new URLSearchParams({
@@ -60,8 +54,7 @@ async function start() {
         const batch = await fetchPage(page);
         if (batch.length === 0) break;
 
-        const filtered = videosOnly ? batch.filter(isVideo) : batch;
-        collected = [...collected, ...filtered];
+        collected = [...collected, ...batch];
         page += 1;
       }
 
