@@ -3,10 +3,23 @@ import fastify from 'fastify';
 import cors from '@fastify/cors';
 
 const server = fastify({ logger: true });
+const startedAt = Date.now();
 
 async function start() {
   await server.register(cors, {
     origin: true,
+  });
+
+  server.get('/api/health', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    reply.header('X-Server-Uptime', String(Math.floor(process.uptime())));
+    return {
+      ok: true,
+      status: 'ready',
+      startedAt,
+      uptimeMs: Date.now() - startedAt,
+      uptimeSec: Math.floor(process.uptime()),
+    };
   });
 
   server.get('/api/posts', async (request, reply) => {

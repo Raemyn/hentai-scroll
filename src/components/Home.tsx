@@ -78,6 +78,21 @@ function normalizeSuggestion(item: unknown): string {
   return '';
 }
 
+async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 type MediaCardProps = { post: Post };
 
 function MediaCard({ post }: MediaCardProps) {
@@ -192,6 +207,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
+  const [serverReady, setServerReady] = useState(false);
+  const [serverBooting, setServerBooting] = useState(false);
+
   const [tagInput, setTagInput] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -200,9 +218,6 @@ export default function Home() {
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [page, setPage] = useState(0);
   const [searchOpened, setSearchOpened] = useState(false);
-
-  const [showFullGame, setShowFullGame] = useState(false);
-  const gameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const suppressNextInputChangeRef = useRef(false);
@@ -229,22 +244,42 @@ export default function Home() {
   const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
 
   useEffect(() => {
-    if (loading) {
-      gameTimeoutRef.current = setTimeout(() => {
-        setShowFullGame(true);
-      }, 8000);
-    } else {
-      if (gameTimeoutRef.current) {
-        clearTimeout(gameTimeoutRef.current);
-        gameTimeoutRef.current = null;
+    let cancelled = false;
+
+    const waitForServer = async () => {
+      while (!cancelled) {
+        try {
+          const res = await fetchWithTimeout(`${API_URL}/api/health`, 1200);
+          const ct = res.headers.get('content-type') ?? '';
+
+          if (!res.ok || !ct.includes('application/json')) {
+            throw new Error('Server not ready');
+          }
+
+          await res.json();
+
+          if (cancelled) return;
+          setServerReady(true);
+          setServerBooting(false);
+          return;
+        } catch {
+          if (cancelled) return;
+
+          // Только здесь включаем игру — значит сервер реально ещё поднимается
+          setServerBooting(true);
+
+          // небольшая пауза перед следующим пингом
+          await new Promise((r) => window.setTimeout(r, 900));
+        }
       }
-      setShowFullGame(false);
-    }
+    };
+
+    waitForServer();
 
     return () => {
-      if (gameTimeoutRef.current) clearTimeout(gameTimeoutRef.current);
+      cancelled = true;
     };
-  }, [loading]);
+  }, []);
 
   function clearSearchInput() {
     suppressNextInputChangeRef.current = true;
@@ -306,6 +341,8 @@ export default function Home() {
   }, [appliedTags, onlyVideos]);
 
   useEffect(() => {
+    if (!serverReady) return;
+
     const controller = new AbortController();
 
     async function load() {
@@ -344,7 +381,7 @@ export default function Home() {
 
     load();
     return () => controller.abort();
-  }, [page, appliedTags, onlyVideos]);
+  }, [serverReady, page, appliedTags, onlyVideos]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -352,7 +389,7 @@ export default function Home() {
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading) {
+        if (entries[0].isIntersecting && hasMore && !loading && serverReady) {
           setPage((p) => p + 1);
         }
       },
@@ -361,7 +398,7 @@ export default function Home() {
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, loading]);
+  }, [hasMore, loading, serverReady]);
 
   const sortLabel = sortMode === 'newest' ? 'Новые' : sortMode === 'oldest' ? 'Старые' : 'Топ';
 
@@ -545,29 +582,25 @@ export default function Home() {
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {loading && (
-        <>
-          {!showFullGame && (
-            <Box
-              style={{
-                position: 'relative',
-                zIndex: 5,
-                display: 'flex',
-                justifyContent: 'center',
-                marginTop: 12,
-                marginBottom: 6,
-                opacity: 0.45,
-                pointerEvents: 'none',
-              }}
-            >
-              <Text size="xs" c="#aaa" fw={500} style={{ letterSpacing: 0.3 }}>
-                Секунду...
-              </Text>
-            </Box>
-          )}
+      {!serverReady && serverBooting && <LoadingGame />}
 
-          {showFullGame && <LoadingGame />}
-        </>
+      {serverReady && loading && (
+        <Box
+          style={{
+            position: 'relative',
+            zIndex: 5,
+            display: 'flex',
+            justifyContent: 'center',
+            marginTop: 12,
+            marginBottom: 6,
+            opacity: 0.45,
+            pointerEvents: 'none',
+          }}
+        >
+          <Text size="xs" c="#aaa" fw={500} style={{ letterSpacing: 0.3 }}>
+            Секунду...
+          </Text>
+        </Box>
       )}
     </Box>
   );
