@@ -24,7 +24,7 @@ const SPEED = 1.2;
 const LEVEL_DURATION = 22400;
 const WIN_BEFORE_END = 2000;
 const PROGRESS_TICK_MS = 60;
-const CATGIRL_URL = '/altBerd.png';
+const CATGIRL_URL = '/public/altBerd.png';
 
 const PIPE_MIN_HEIGHT = 90;
 const PIPE_MAX_HEIGHT = GAME_HEIGHT - PIPE_GAP - 120;
