@@ -37,18 +37,40 @@ function useResponsiveScale() {
 
   useEffect(() => {
     const update = () => {
-      const widthAvail = Math.max(320, window.innerWidth - 16);
-      const heightAvail = Math.max(420, window.innerHeight - 160);
-      const next = Math.min(widthAvail / GAME_WIDTH, heightAvail / GAME_HEIGHT, 1);
+      // Используем visualViewport — это самый точный размер на телефонах
+      // (учитывает панели браузера, статус-бар, навигацию и т.д.)
+      let availWidth = window.innerWidth;
+      let availHeight = window.innerHeight;
+
+      if (window.visualViewport) {
+        availWidth = window.visualViewport.width;
+        availHeight = window.visualViewport.height;
+      }
+
+      const widthAvail = Math.max(320, availWidth - 32);   // чуть больше отступов
+      const heightAvail = Math.max(420, availHeight - 140); // место под прогресс-бар + отступы
+
+      // Теперь игра может становиться БОЛЬШЕ 1 на больших экранах
+      // и меньше на маленьких — полностью адаптивно
+      const next = Math.min(widthAvail / GAME_WIDTH, heightAvail / GAME_HEIGHT);
+
       setScale(Number.isFinite(next) && next > 0 ? next : 1);
     };
 
     update();
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
+    // visualViewport тоже меняется (например при открытии клавиатуры)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', update);
+    }
+
     return () => {
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', update);
+      }
     };
   }, []);
 
@@ -72,7 +94,7 @@ const LoadingProgressBar = memo(function LoadingProgressBar() {
   }, []);
 
   return (
-    <Box style={{ width: 'min(100vw - 16px, 600px)', marginBottom: 12, flexShrink: 0 }}>
+    <Box style={{ width: 'min(100vw - 32px, 600px)', marginBottom: 12, flexShrink: 0 }}>
       <Text size="sm" fw={700} c="#ff1493" style={{ textAlign: 'center', marginBottom: 4 }}>
         Грузим данные с сервера не больше 20сек
       </Text>
@@ -197,11 +219,10 @@ export default function NormalFlappyBird() {
     const loop = (time: number) => {
       const state = gameStateRef.current;
 
-      // === DELTA TIME (фиксит лаги на телефонах) ===
       if (lastFrameTimeRef.current === 0) lastFrameTimeRef.current = time;
       const delta = time - lastFrameTimeRef.current;
       lastFrameTimeRef.current = time;
-      const deltaFactor = Math.min(delta / (1000 / 60), 3); // нормализация под 60 FPS + защита от спайков
+      const deltaFactor = Math.min(delta / (1000 / 60), 3);
 
       if (state === 'idle') {
         const bob = Math.sin(time / 200) * 15;
@@ -226,7 +247,6 @@ export default function NormalFlappyBird() {
       }
 
       if (state === 'won') {
-        // плавный подъём птицы + движение труб (тоже delta-time)
         const lerpAmount = 0.05 * deltaFactor;
         birdYRef.current += (250 - birdYRef.current) * lerpAmount;
         setBirdTransform(birdYRef.current, 0);
@@ -240,15 +260,12 @@ export default function NormalFlappyBird() {
         return;
       }
 
-      // === PLAYING ===
       if (lastPipeTime.current === 0) lastPipeTime.current = time;
 
-      // Физика птицы (теперь не зависит от FPS)
       velocityRef.current += GRAVITY * deltaFactor;
       birdYRef.current += velocityRef.current * deltaFactor;
       setBirdTransform(birdYRef.current, clamp(velocityRef.current * 4, -25, 90));
 
-      // Спавн труб (время реальное — расстояние всегда одинаковое)
       if (time - lastPipeTime.current > PIPE_SPAWN_RATE && elapsed < LEVEL_DURATION - WIN_BEFORE_END) {
         const topHeight = generateTopHeight();
 
@@ -383,7 +400,7 @@ export default function NormalFlappyBird() {
     <Flex direction="column" align="center" style={{ margin: '20px auto', width: '100%' }}>
       <LoadingProgressBar />
 
-      {/* Внешний контейнер с фиксированным размером + overflow hidden */}
+      {/* Внешний контейнер — точно по размеру после scale */}
       <Box
         style={{
           width: scaledWidth,
@@ -391,9 +408,11 @@ export default function NormalFlappyBird() {
           margin: '0 auto',
           position: 'relative',
           overflow: 'hidden',
+          maxWidth: '100vw',
+          maxHeight: '100vh',
         }}
       >
-        {/* Игровое поле — absolute + scale (теперь точно помещается на телефонах) */}
+        {/* Игровое поле */}
         <Box
           onClick={jump}
           style={{
@@ -416,6 +435,7 @@ export default function NormalFlappyBird() {
             willChange: 'transform',
             contain: 'layout paint size',
             transition: 'transform 120ms linear, border-color 180ms ease, box-shadow 180ms ease',
+            boxSizing: 'border-box', // ← КРИТИЧНО! Теперь border не вылезает за пределы
           }}
         >
           <Box
