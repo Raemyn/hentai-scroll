@@ -1,65 +1,173 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Text, Title } from '@mantine/core';
 
-// --- НАСТРОЙКИ ИГРЫ (плавная версия) ---
-const GAME_WIDTH = 380;
-const GAME_HEIGHT = 500;
-const BIRD_X = 50;
-const BIRD_SIZE = 45;
-const PIPE_WIDTH = 60;
-const PIPE_GAP = 160; 
-const PIPE_SPAWN_RATE = 1400; 
-const GRAVITY = 0.05;
-const JUMP_STRENGTH = -2.2;
-const SPEED = 1.2;
-const LEVEL_DURATION = 22400;   // 16.4 секунды — прогресс-бар всегда идёт до конца
+type GameState = 'idle' | 'playing' | 'dead' | 'won';
 
-// ← НОВОЕ: точно 2 секунды до конца прогресс-бара
-const TIME_TO_SHOW_WIN_BEFORE_END = 2000;
-
-const CATGIRL_URL = '/favicon.ico';
-
-type PipeData = {
+type PipeInstance = {
     id: number;
     x: number;
     topHeight: number;
     passed: boolean;
+    el: HTMLDivElement;
 };
 
-type GameState = 'idle' | 'playing' | 'dead' | 'won';
+const GAME_WIDTH = 600;
+const GAME_HEIGHT = 800;
+const BIRD_X = 50;
+const BIRD_SIZE = 85;
+const PIPE_WIDTH = 90;
+const PIPE_GAP = 200;
+const PIPE_SPAWN_RATE = 1400;
+const GRAVITY = 0.05;
+const JUMP_STRENGTH = -2.2;
+const SPEED = 1.2;
+const LEVEL_DURATION = 22400;
+const WIN_BEFORE_END = 2000;
+const PROGRESS_TICK_MS = 60;
+const CATGIRL_URL = '/public/altBerd.png';
+
+const PIPE_MIN_HEIGHT = 90;
+const PIPE_MAX_HEIGHT = GAME_HEIGHT - PIPE_GAP - 120;
+const PIPE_MAX_STEP = 90;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+function useResponsiveScale() {
+    const [scale, setScale] = useState(1);
+
+    useEffect(() => {
+        const update = () => {
+            const widthAvail = Math.max(320, window.innerWidth - 16);
+            const heightAvail = Math.max(420, window.innerHeight - 160);
+            const next = Math.min(widthAvail / GAME_WIDTH, heightAvail / GAME_HEIGHT, 1);
+            setScale(Number.isFinite(next) && next > 0 ? next : 1);
+        };
+
+        update();
+        window.addEventListener('resize', update);
+        window.addEventListener('orientationchange', update);
+        return () => {
+            window.removeEventListener('resize', update);
+            window.removeEventListener('orientationchange', update);
+        };
+    }, []);
+
+    return scale;
+}
+
+const LoadingProgressBar = memo(function LoadingProgressBar() {
+    const [progress, setProgress] = useState(0);
+    const startRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        startRef.current = performance.now();
+
+        const timer = window.setInterval(() => {
+            if (startRef.current === null) return;
+            const elapsed = performance.now() - startRef.current;
+            setProgress(clamp((elapsed / LEVEL_DURATION) * 100, 0, 100));
+        }, PROGRESS_TICK_MS);
+
+        return () => window.clearInterval(timer);
+    }, []);
+
+    return (
+        <Box style={{ width: 'min(100vw - 16px, 600px)', marginBottom: 12, flexShrink: 0 }}>
+            <Text size="sm" fw={700} c="#ff1493" style={{ textAlign: 'center', marginBottom: 4 }}>
+                Грузим данные с сервера не больше 20сек
+            </Text>
+            <Box
+                style={{
+                    width: '100%',
+                    height: 14,
+                    background: '#ff1493',
+                    borderRadius: 999,
+                    overflow: 'hidden',
+                    boxShadow: '0 0 8px rgba(255, 20, 147, 0.22)',
+                }}
+            >
+                <Box
+                    style={{
+                        width: `${progress}%`,
+                        height: '100%',
+                        background: '#7000ff',
+                        borderRadius: 999,
+                        transition: 'none',
+                        willChange: 'width',
+                    }}
+                />
+            </Box>
+        </Box>
+    );
+});
 
 export default function NormalFlappyBird() {
+    const scale = useResponsiveScale();
+
     const [gameState, setGameState] = useState<GameState>('idle');
-    const [birdY, setBirdY] = useState(250);
     const [score, setScore] = useState(0);
-    const [rotation, setRotation] = useState(0);
-    const [pipes, setPipes] = useState<PipeData[]>([]);
     const [flash, setFlash] = useState(false);
-    const [timeProgress, setTimeProgress] = useState(0);
 
     const gameStateRef = useRef<GameState>('idle');
     const birdYRef = useRef(250);
     const velocityRef = useRef(0);
-    const pipesRef = useRef<PipeData[]>([]);
+    const pipesRef = useRef<PipeInstance[]>([]);
     const frameId = useRef<number>(0);
     const lastPipeTime = useRef<number>(0);
-    const startTimeRef = useRef<number>(0);
+    const gameStartRef = useRef<number>(0);
+    const flashTimeoutRef = useRef<number | null>(null);
+    const lastTopHeightRef = useRef<number>(Math.floor((PIPE_MIN_HEIGHT + PIPE_MAX_HEIGHT) / 2));
 
-    const changeState = (newState: GameState) => {
-        gameStateRef.current = newState;
-        setGameState(newState);
-    };
+    const birdElRef = useRef<HTMLDivElement | null>(null);
+    const pipesLayerRef = useRef<HTMLDivElement | null>(null);
+
+    const changeState = useCallback((next: GameState) => {
+        gameStateRef.current = next;
+        setGameState(next);
+    }, []);
+
+    const setBirdTransform = useCallback((y: number, rotation: number) => {
+        const el = birdElRef.current;
+        if (!el) return;
+        el.style.transform = `translate3d(0, ${y}px, 0) rotate(${rotation}deg)`;
+    }, []);
+
+    const removePipe = useCallback((pipe: PipeInstance) => {
+        pipe.el.remove();
+    }, []);
+
+    const generateTopHeight = useCallback(() => {
+        const previous = lastTopHeightRef.current;
+        const step = Math.round((Math.random() * 2 - 1) * PIPE_MAX_STEP);
+        const next = clamp(previous + step, PIPE_MIN_HEIGHT, PIPE_MAX_HEIGHT);
+        lastTopHeightRef.current = next;
+        return next;
+    }, []);
+
+    const resetToIdle = useCallback(() => {
+        birdYRef.current = 250;
+        velocityRef.current = 0;
+        gameStartRef.current = 0;
+        lastPipeTime.current = 0;
+        lastTopHeightRef.current = Math.floor((PIPE_MIN_HEIGHT + PIPE_MAX_HEIGHT) / 2);
+        setScore(0);
+        setFlash(false);
+
+        if (flashTimeoutRef.current !== null) {
+            window.clearTimeout(flashTimeoutRef.current);
+            flashTimeoutRef.current = null;
+        }
+
+        for (const pipe of pipesRef.current) removePipe(pipe);
+        pipesRef.current = [];
+
+        setBirdTransform(250, 0);
+        changeState('idle');
+    }, [changeState, removePipe, setBirdTransform]);
 
     const jump = useCallback(() => {
         if (gameStateRef.current === 'dead') {
-            // Ресет ТОЛЬКО игры. Прогресс-бар НЕ сбрасывается!
-            birdYRef.current = 250;
-            velocityRef.current = 0;
-            pipesRef.current = [];
-            setScore(0);
-            setFlash(false);
-            lastPipeTime.current = 0;
-            changeState('idle');
+            resetToIdle();
             return;
         }
 
@@ -70,110 +178,7 @@ export default function NormalFlappyBird() {
         }
 
         velocityRef.current = JUMP_STRENGTH;
-    }, []);
-
-    useEffect(() => {
-        const loop = (time: number) => {
-            if (gameStateRef.current === 'idle') {
-                birdYRef.current = 250 + Math.sin(time / 200) * 15;
-                setBirdY(birdYRef.current);
-                setRotation(Math.sin(time / 200) * 10);
-                frameId.current = requestAnimationFrame(loop);
-                return;
-            }
-
-            // ─────── ПРОГРЕСС-БАР ВСЕГДА РАБОТАЕТ (даже если dead или won) ───────
-            if (startTimeRef.current === 0) startTimeRef.current = time;
-            const elapsed = time - startTimeRef.current;
-            const currentProgress = Math.min((elapsed / LEVEL_DURATION) * 100, 100);
-            setTimeProgress(currentProgress);
-
-            // ─────── ПОБЕДА РОВНО ЗА 2 СЕКУНДЫ ДО КОНЦА (независимо от смерти) ───────
-            if (elapsed >= LEVEL_DURATION - TIME_TO_SHOW_WIN_BEFORE_END && gameStateRef.current !== 'won') {
-                changeState('won');
-            }
-
-            if (gameStateRef.current === 'dead') {
-                frameId.current = requestAnimationFrame(loop);
-                return;
-            }
-
-            if (gameStateRef.current === 'won') {
-                birdYRef.current += (250 - birdYRef.current) * 0.05;
-                setBirdY(birdYRef.current);
-                setRotation(0);
-                pipesRef.current = pipesRef.current.map(p => ({ ...p, x: p.x - SPEED }));
-                setPipes([...pipesRef.current]);
-                frameId.current = requestAnimationFrame(loop);
-                return;
-            }
-
-            // ─────── ИГРА ИДЁТ ТОЛЬКО В СОСТОЯНИИ 'playing' ───────
-            if (lastPipeTime.current === 0) lastPipeTime.current = time;
-
-            velocityRef.current += GRAVITY;
-            birdYRef.current += velocityRef.current;
-            setRotation(Math.min(Math.max(velocityRef.current * 4, -25), 90));
-
-            // Спавн труб — перестаём ровно за 2 секунды до конца
-            if (time - lastPipeTime.current > PIPE_SPAWN_RATE && elapsed < LEVEL_DURATION - TIME_TO_SHOW_WIN_BEFORE_END) {
-                const minH = 50;
-                const maxH = GAME_HEIGHT - PIPE_GAP - 50;
-                const topHeight = Math.floor(Math.random() * (maxH - minH + 1) + minH);
-
-                pipesRef.current.push({
-                    id: Date.now(),
-                    x: GAME_WIDTH,
-                    topHeight,
-                    passed: false
-                });
-                lastPipeTime.current = time;
-            }
-
-            const hitBoxBuffer = 12;
-            let hit = false;
-
-            pipesRef.current = pipesRef.current
-                .map(pipe => ({ ...pipe, x: pipe.x - SPEED }))
-                .filter(pipe => {
-                    if (!pipe.passed && pipe.x + PIPE_WIDTH < BIRD_X) {
-                        pipe.passed = true;
-                        setScore(s => s + 1);
-                    }
-
-                    const birdRight = BIRD_X + BIRD_SIZE - hitBoxBuffer;
-                    const birdLeft = BIRD_X + hitBoxBuffer;
-                    const birdTop = birdYRef.current + hitBoxBuffer;
-                    const birdBottom = birdYRef.current + BIRD_SIZE - hitBoxBuffer;
-
-                    if (birdRight > pipe.x && birdLeft < pipe.x + PIPE_WIDTH) {
-                        if (birdTop < pipe.topHeight || birdBottom > pipe.topHeight + PIPE_GAP) {
-                            hit = true;
-                        }
-                    }
-                    return pipe.x > -PIPE_WIDTH;
-                });
-
-            if (birdYRef.current > GAME_HEIGHT - BIRD_SIZE || birdYRef.current < 0) {
-                hit = true;
-            }
-
-            if (hit) {
-                changeState('dead');
-                setFlash(true);
-                setTimeout(() => setFlash(false), 150);
-                frameId.current = requestAnimationFrame(loop);
-                return;
-            }
-
-            setBirdY(birdYRef.current);
-            setPipes([...pipesRef.current]);
-            frameId.current = requestAnimationFrame(loop);
-        };
-
-        frameId.current = requestAnimationFrame(loop);
-        return () => cancelAnimationFrame(frameId.current);
-    }, []);
+    }, [changeState, resetToIdle]);
 
     useEffect(() => {
         const handleKey = (e: KeyboardEvent) => {
@@ -182,212 +187,325 @@ export default function NormalFlappyBird() {
                 jump();
             }
         };
-        window.addEventListener('keydown', handleKey);
+
+        window.addEventListener('keydown', handleKey, { passive: false });
         return () => window.removeEventListener('keydown', handleKey);
     }, [jump]);
 
-    return (
-        <Flex direction="column" align="center" style={{ margin: '20px auto' }}>
-            
-            {/* PROGRESS-БАР — полностью независим от игры */}
-            <Box style={{ width: GAME_WIDTH, marginBottom: 12 }}>
-                <Text 
-                    size="sm" 
-                    fw={700} 
-                    c="#ff1493" 
-                    style={{ 
-                        textAlign: 'center', 
-                        marginBottom: 4,
-                        textShadow: '0 0 8px #ff1493'
-                    }}
-                >
-                    Грузим данные с сервера
-                </Text>
-                <Box
-                    style={{
-                        height: '10px',
-                        background: 'rgba(255,255,255,0.1)',
-                        borderRadius: '10px',
-                        overflow: 'hidden',
-                        border: '1px solid rgba(255,255,255,0.3)'
-                    }}
-                >
-                    <Box
-                        style={{
-                            width: `${timeProgress}%`,
-                            height: '100%',
-                            background: timeProgress >= 100 ? '#00ffcc' : '#ff1493',
-                            boxShadow: `0 0 12px ${timeProgress >= 100 ? '#00ffcc' : '#ff1493'}`,
-                            transition: 'width 0.1s linear'
-                        }}
-                    />
-                </Box>
-            </Box>
+    useEffect(() => {
+        const loop = (time: number) => {
+            const state = gameStateRef.current;
 
-            {/* Сама игра */}
-            <Box
-                onClick={jump}
-                style={{
-                    width: GAME_WIDTH,
-                    height: GAME_HEIGHT,
-                    position: 'relative',
-                    backgroundColor: '#0a001a',
-                    borderRadius: '12px',
-                    overflow: 'hidden',
-                    border: `3px solid ${gameState === 'dead' ? '#ff1493' : gameState === 'won' ? '#00ffcc' : '#7000ff'}`,
-                    boxShadow: gameState === 'dead' ? '0 0 30px #ff1493' : gameState === 'won' ? '0 0 40px #00ffcc' : '0 0 20px #7000ff',
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    transition: 'transform 0.1s linear, border 0.3s, box-shadow 0.3s',
-                    transform: flash ? 'scale(1.03) translateY(-5px)' : 'scale(1)',
-                }}
-            >
-                {/* Неоновый фон */}
-                <Box
-                    style={{
-                        position: 'absolute',
-                        inset: 0,
-                        backgroundImage: `
-                            linear-gradient(rgba(255, 20, 147, 0.1) 1px, transparent 1px),
-                            linear-gradient(90deg, rgba(255, 20, 147, 0.1) 1px, transparent 1px)
-                        `,
-                        backgroundSize: '40px 40px',
-                        opacity: gameState === 'won' ? 0.2 : 0.5,
-                    }}
-                />
+            if (state === 'idle') {
+                const bob = Math.sin(time / 200) * 15;
+                birdYRef.current = 250 + bob;
+                setBirdTransform(birdYRef.current, Math.sin(time / 200) * 10);
+                frameId.current = requestAnimationFrame(loop);
+                return;
+            }
 
-                {/* Трубы */}
-                {pipes.map(pipe => (
-                    <Box key={pipe.id}>
-                        <Box
-                            style={{
-                                position: 'absolute',
-                                left: pipe.x,
-                                top: 0,
-                                width: PIPE_WIDTH,
-                                height: pipe.topHeight,
-                                background: 'linear-gradient(to bottom, #ff00ff, #7000ff)',
-                                borderRadius: '0 0 8px 8px',
-                                boxShadow: '0 0 15px #ff00ff',
-                                border: '2px solid #fff',
-                            }}
-                        />
-                        <Box
-                            style={{
-                                position: 'absolute',
-                                left: pipe.x,
-                                top: pipe.topHeight + PIPE_GAP,
-                                width: PIPE_WIDTH,
-                                height: GAME_HEIGHT - (pipe.topHeight + PIPE_GAP),
-                                background: 'linear-gradient(to top, #ff00ff, #7000ff)',
-                                borderRadius: '8px 8px 0 0',
-                                boxShadow: '0 0 15px #ff00ff',
-                                border: '2px solid #fff',
-                            }}
-                        />
-                    </Box>
-                ))}
+            if (gameStartRef.current === 0) gameStartRef.current = time;
+            const elapsed = time - gameStartRef.current;
 
-                {/* Киска */}
-                <Box
-                    style={{
-                        position: 'absolute',
-                        left: BIRD_X,
-                        top: birdY,
-                        width: BIRD_SIZE,
-                        height: BIRD_SIZE,
-                        zIndex: 10,
-                        transform: `rotate(${rotation}deg)`,
-                        filter: gameState === 'won' ? 'drop-shadow(0 0 20px #00ffcc)' : 'drop-shadow(0 0 10px #ff1493)',
-                    }}
-                >
-                    <img
-                        src={CATGIRL_URL}
-                        alt="catgirl"
-                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                    />
-                </Box>
+            if (elapsed >= LEVEL_DURATION - WIN_BEFORE_END && state !== 'won') {
+                changeState('won');
+                frameId.current = requestAnimationFrame(loop);
+                return;
+            }
 
-                {/* Счёт */}
-                {(gameState === 'playing' || gameState === 'idle') && (
-                    <Title
-                        order={1}
-                        style={{
-                            position: 'absolute',
-                            top: 20,
-                            width: '100%',
-                            textAlign: 'center',
-                            color: '#fff',
-                            textShadow: '0 0 10px #ff1493',
-                            zIndex: 20,
-                            fontFamily: 'monospace',
-                            fontSize: '48px'
-                        }}
-                    >
-                        {score}
-                    </Title>
-                )}
+            if (state === 'dead') {
+                frameId.current = requestAnimationFrame(loop);
+                return;
+            }
 
-                {/* Сообщение в idle */}
-                {gameState === 'idle' && (
-                    <Box
-                        style={{
-                            position: 'absolute',
-                            top: '60%',
-                            width: '100%',
-                            textAlign: 'center',
-                            color: '#fff',
-                            textShadow: '0 0 10px #ff1493',
-                            animation: 'pulse 1.5s infinite',
-                            zIndex: 20,
-                        }}
-                    >
-                        <Text fw={800} size="lg">КЛИКНИ ИЛИ НАЖМИ ПРОБЕЛ</Text>
-                        <Text size="sm">ЛЕТИМ 16 СЕКУНД 💦</Text>
-                    </Box>
-                )}
+            if (state === 'won') {
+                birdYRef.current += (250 - birdYRef.current) * 0.05;
+                setBirdTransform(birdYRef.current, 0);
+                for (const pipe of pipesRef.current) {
+                    pipe.x -= SPEED;
+                    pipe.el.style.transform = `translate3d(${pipe.x}px, 0, 0)`;
+                }
+                frameId.current = requestAnimationFrame(loop);
+                return;
+            }
 
-                {/* GAME OVER */}
-                {gameState === 'dead' && (
-                    <Flex
-                        direction="column"
-                        align="center"
-                        justify="center"
-                        style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100 }}
-                    >
-                        <Text c="#ff1493" fw={900} style={{ fontSize: '36px', textShadow: '0 0 15px #ff1493' }}>
-                            GAME OVER
-                        </Text>
-                        <Text c="#fff" size="xl" mb={20}>Труб пройдено: {score}</Text>
-                        <Box style={{ padding: '10px 20px', background: '#ff1493', color: '#fff', borderRadius: '8px', fontWeight: 'bold', animation: 'pulse 1.5s infinite' }}>
-                            КЛИКНИ, ЧТОБЫ ПОВТОРИТЬ
-                        </Box>
-                    </Flex>
-                )}
+            if (lastPipeTime.current === 0) lastPipeTime.current = time;
 
-                {/* ПОБЕДА — появляется ровно за 2 секунды до конца прогресс-бара */}
-                {gameState === 'won' && (
-                    <Flex
-                        direction="column"
-                        align="center"
-                        justify="center"
-                        style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(10, 0, 26, 0.85)', zIndex: 100, backdropFilter: 'blur(3px)' }}
-                    >
-                        <Text c="#00ffcc" fw={900} style={{ fontSize: '42px', textShadow: '0 0 25px #00ffcc', textAlign: 'center' }}>
-                            АХЕГАО<br/>ДОСТИГНУТО!
-                        </Text>
-                        <Text c="#fff" size="lg" mt={10}>Уровень пройден 😻</Text>
-                    </Flex>
-                )}
+            velocityRef.current += GRAVITY;
+            birdYRef.current += velocityRef.current;
+            setBirdTransform(birdYRef.current, clamp(velocityRef.current * 4, -25, 90));
 
-                <style>{`
-                    @keyframes pulse {
-                        0% { transform: scale(1); opacity: 1; }
-                        50% { transform: scale(1.05); opacity: 0.8; }
-                        100% { transform: scale(1); opacity: 1; }
+            if (time - lastPipeTime.current > PIPE_SPAWN_RATE && elapsed < LEVEL_DURATION - WIN_BEFORE_END) {
+                const topHeight = generateTopHeight();
+
+                const pair = document.createElement('div');
+                pair.style.position = 'absolute';
+                pair.style.left = '0';
+                pair.style.top = '0';
+                pair.style.willChange = 'transform';
+                pair.style.transform = `translate3d(${GAME_WIDTH}px, 0, 0)`;
+
+                const top = document.createElement('div');
+                top.style.position = 'absolute';
+                top.style.left = '0';
+                top.style.top = '0';
+                top.style.width = `${PIPE_WIDTH}px`;
+                top.style.height = `${topHeight}px`;
+                top.style.background = 'linear-gradient(to bottom, #ff00ff, #7000ff)';
+                top.style.borderRadius = '0 0 8px 8px';
+                top.style.border = '2px solid rgba(255,255,255,0.75)';
+                top.style.boxShadow = '0 0 8px rgba(255,0,255,0.3)';
+
+                const bottom = document.createElement('div');
+                bottom.style.position = 'absolute';
+                bottom.style.left = '0';
+                bottom.style.top = `${topHeight + PIPE_GAP}px`;
+                bottom.style.width = `${PIPE_WIDTH}px`;
+                bottom.style.height = `${GAME_HEIGHT - (topHeight + PIPE_GAP)}px`;
+                bottom.style.background = 'linear-gradient(to top, #ff00ff, #7000ff)';
+                bottom.style.borderRadius = '8px 8px 0 0';
+                bottom.style.border = '2px solid rgba(255,255,255,0.75)';
+                bottom.style.boxShadow = '0 0 8px rgba(255,0,255,0.3)';
+
+                pair.appendChild(top);
+                pair.appendChild(bottom);
+                pipesLayerRef.current?.appendChild(pair);
+
+                pipesRef.current.push({
+                    id: time + Math.random(),
+                    x: GAME_WIDTH,
+                    topHeight,
+                    passed: false,
+                    el: pair,
+                });
+                lastPipeTime.current = time;
+            }
+
+            const hitBoxBuffer = 12;
+            const birdRight = BIRD_X + BIRD_SIZE - hitBoxBuffer;
+            const birdLeft = BIRD_X + hitBoxBuffer;
+            const birdTop = birdYRef.current + hitBoxBuffer;
+            const birdBottom = birdYRef.current + BIRD_SIZE - hitBoxBuffer;
+
+            let hit = false;
+            const nextPipes: PipeInstance[] = [];
+
+            for (const pipe of pipesRef.current) {
+                pipe.x -= SPEED;
+                pipe.el.style.transform = `translate3d(${pipe.x}px, 0, 0)`;
+
+                if (!pipe.passed && pipe.x + PIPE_WIDTH < BIRD_X) {
+                    pipe.passed = true;
+                    setScore((prev) => prev + 1);
+                }
+
+                if (birdRight > pipe.x && birdLeft < pipe.x + PIPE_WIDTH) {
+                    if (birdTop < pipe.topHeight || birdBottom > pipe.topHeight + PIPE_GAP) {
+                        hit = true;
                     }
-                `}</style>
+                }
+
+                if (pipe.x > -PIPE_WIDTH) {
+                    nextPipes.push(pipe);
+                } else {
+                    removePipe(pipe);
+                }
+            }
+
+            pipesRef.current = nextPipes;
+
+            if (birdYRef.current > GAME_HEIGHT - BIRD_SIZE || birdYRef.current < 0) {
+                hit = true;
+            }
+
+            if (hit) {
+                changeState('dead');
+                setFlash(true);
+                if (flashTimeoutRef.current !== null) window.clearTimeout(flashTimeoutRef.current);
+                flashTimeoutRef.current = window.setTimeout(() => setFlash(false), 140);
+                frameId.current = requestAnimationFrame(loop);
+                return;
+            }
+
+            frameId.current = requestAnimationFrame(loop);
+        };
+
+        frameId.current = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(frameId.current);
+    }, [changeState, generateTopHeight, removePipe, setBirdTransform]);
+
+    const borderColor = useMemo(() => {
+        if (gameState === 'dead') return '#ff1493';
+        if (gameState === 'won') return '#00ffcc';
+        return '#7000ff';
+    }, [gameState]);
+
+    const boxShadow = useMemo(() => {
+        if (gameState === 'dead') return '0 0 14px rgba(255, 20, 147, 0.35)';
+        if (gameState === 'won') return '0 0 18px rgba(0, 255, 204, 0.28)';
+        return '0 0 12px rgba(112, 0, 255, 0.3)';
+    }, [gameState]);
+
+    const scaledWidth = GAME_WIDTH * scale;
+    const scaledHeight = GAME_HEIGHT * scale;
+
+    return (
+        <Flex direction="column" align="center" style={{ margin: '20px auto', width: '100%' }}>
+            <LoadingProgressBar />
+
+            <Box style={{ width: scaledWidth, height: scaledHeight, margin: '0 auto' }}>
+                <Box
+                    onClick={jump}
+                    style={{
+                        width: GAME_WIDTH,
+                        height: GAME_HEIGHT,
+                        position: 'relative',
+                        backgroundColor: '#0a001a',
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        border: `2px solid ${borderColor}`,
+                        boxShadow,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        touchAction: 'manipulation',
+                        WebkitTapHighlightColor: 'transparent',
+                        transform: `scale(${scale})`,
+                        transformOrigin: 'top left',
+                        willChange: 'transform',
+                        contain: 'layout paint size',
+                    }}
+                >
+                    <Box
+                        style={{
+                            position: 'absolute',
+                            inset: 0,
+                            backgroundImage:
+                                'linear-gradient(rgba(255, 20, 147, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 20, 147, 0.08) 1px, transparent 1px)',
+                            backgroundSize: '42px 42px',
+                            opacity: gameState === 'won' ? 0.15 : 0.32,
+                            pointerEvents: 'none',
+                        }}
+                    />
+
+                    <Box ref={pipesLayerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+
+                    <Box
+                        ref={birdElRef}
+                        style={{
+                            position: 'absolute',
+                            left: BIRD_X,
+                            top: 0,
+                            width: BIRD_SIZE,
+                            height: BIRD_SIZE,
+                            zIndex: 10,
+                            willChange: 'transform',
+                            transform: 'translate3d(0, 250px, 0) rotate(0deg)',
+                            filter: gameState === 'won' ? 'drop-shadow(0 0 8px rgba(0,255,204,0.45))' : 'none',
+                        }}
+                    >
+                        <img
+                            src={CATGIRL_URL}
+                            alt="catgirl"
+                            draggable={false}
+                            style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+                        />
+                    </Box>
+
+                    {(gameState === 'playing' || gameState === 'idle') && (
+                        <Title
+                            order={1}
+                            style={{
+                                position: 'absolute',
+                                top: 18,
+                                width: '100%',
+                                textAlign: 'center',
+                                color: '#fff',
+                                textShadow: '0 0 8px rgba(255, 20, 147, 0.35)',
+                                zIndex: 20,
+                                fontFamily: 'monospace',
+                                fontSize: 42,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            {score}
+                        </Title>
+                    )}
+
+                    {gameState === 'idle' && (
+                        <Box
+                            style={{
+                                position: 'absolute',
+                                top: '60%',
+                                width: '100%',
+                                textAlign: 'center',
+                                color: '#fff',
+                                zIndex: 20,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            <Text fw={800} size="lg">
+                                КЛИКНИ ИЛИ НАЖМИ ПРОБЕЛ
+                            </Text>
+                            <Text size="sm">ЛЕТИМ 20 СЕКУНД 💦</Text>
+                        </Box>
+                    )}
+
+                    {gameState === 'dead' && (
+                        <Flex
+                            direction="column"
+                            align="center"
+                            justify="center"
+                            style={{
+                                position: 'absolute',
+                                inset: 0,
+                                backgroundColor: 'rgba(0,0,0,0.82)',
+                                zIndex: 100,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            <Text c="#ff1493" fw={900} style={{ fontSize: 34, textShadow: '0 0 10px rgba(255, 20, 147, 0.45)' }}>
+                                GAME OVER
+                            </Text>
+                            <Text c="#fff" size="xl" mb={18}>
+                                Труб пройдено: {score}
+                            </Text>
+                            <Box style={{ padding: '10px 18px', background: '#ff1493', color: '#fff', borderRadius: 8, fontWeight: 700 }}>
+                                КЛИКНИ, ЧТОБЫ ПОВТОРИТЬ
+                            </Box>
+                        </Flex>
+                    )}
+
+                    {gameState === 'won' && (
+                        <Flex
+                            direction="column"
+                            align="center"
+                            justify="center"
+                            style={{
+                                position: 'absolute',
+                                inset: 0,
+                                backgroundColor: 'rgba(10, 0, 26, 0.86)',
+                                zIndex: 100,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            <Text c="#00ffcc" fw={900} style={{ fontSize: 38, textShadow: '0 0 14px rgba(0,255,204,0.45)', textAlign: 'center' }}>
+                                Данные<br />ЗАГРУЖЕННЫ!
+                            </Text>
+                        </Flex>
+                    )}
+                </Box>
             </Box>
         </Flex>
     );
 }
+
+
+<Text c="#00ffcc" fw={900} style={{ fontSize: 38, textShadow: '0 0 14px rgba(0,255,204,0.45)', textAlign: 'center' }}>
+    Данные<br />ЗАГРУЖЕННЫ!
+</Text>
+
+
+
+
+
+
