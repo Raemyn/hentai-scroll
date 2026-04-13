@@ -18,9 +18,9 @@ const BIRD_SIZE = 85;
 const PIPE_WIDTH = 90;
 const PIPE_GAP = 200;
 const PIPE_SPAWN_RATE = 1400;
-const GRAVITY = 0.05;
-const JUMP_STRENGTH = -2.2;
-const SPEED = 1.2;
+const GRAVITY = 0.2;
+const JUMP_STRENGTH = -4.2;
+const SPEED = 2.6;
 const LEVEL_DURATION = 22400;
 const WIN_BEFORE_END = 2000;
 const PROGRESS_TICK_MS = 60;
@@ -117,6 +117,7 @@ export default function NormalFlappyBird() {
   const gameStartRef = useRef<number>(0);
   const flashTimeoutRef = useRef<number | null>(null);
   const lastTopHeightRef = useRef<number>(Math.floor((PIPE_MIN_HEIGHT + PIPE_MAX_HEIGHT) / 2));
+  const lastFrameTimeRef = useRef<number>(0);
 
   const birdElRef = useRef<HTMLDivElement | null>(null);
   const pipesLayerRef = useRef<HTMLDivElement | null>(null);
@@ -196,6 +197,12 @@ export default function NormalFlappyBird() {
     const loop = (time: number) => {
       const state = gameStateRef.current;
 
+      // === DELTA TIME (фиксит лаги на телефонах) ===
+      if (lastFrameTimeRef.current === 0) lastFrameTimeRef.current = time;
+      const delta = time - lastFrameTimeRef.current;
+      lastFrameTimeRef.current = time;
+      const deltaFactor = Math.min(delta / (1000 / 60), 3); // нормализация под 60 FPS + защита от спайков
+
       if (state === 'idle') {
         const bob = Math.sin(time / 200) * 15;
         birdYRef.current = 250 + bob;
@@ -219,11 +226,13 @@ export default function NormalFlappyBird() {
       }
 
       if (state === 'won') {
-        birdYRef.current += (250 - birdYRef.current) * 0.05;
+        // плавный подъём птицы + движение труб (тоже delta-time)
+        const lerpAmount = 0.05 * deltaFactor;
+        birdYRef.current += (250 - birdYRef.current) * lerpAmount;
         setBirdTransform(birdYRef.current, 0);
 
         for (const pipe of pipesRef.current) {
-          pipe.x -= SPEED;
+          pipe.x -= SPEED * deltaFactor;
           pipe.el.style.transform = `translate3d(${pipe.x}px, 0, 0)`;
         }
 
@@ -231,12 +240,15 @@ export default function NormalFlappyBird() {
         return;
       }
 
+      // === PLAYING ===
       if (lastPipeTime.current === 0) lastPipeTime.current = time;
 
-      velocityRef.current += GRAVITY;
-      birdYRef.current += velocityRef.current;
+      // Физика птицы (теперь не зависит от FPS)
+      velocityRef.current += GRAVITY * deltaFactor;
+      birdYRef.current += velocityRef.current * deltaFactor;
       setBirdTransform(birdYRef.current, clamp(velocityRef.current * 4, -25, 90));
 
+      // Спавн труб (время реальное — расстояние всегда одинаковое)
       if (time - lastPipeTime.current > PIPE_SPAWN_RATE && elapsed < LEVEL_DURATION - WIN_BEFORE_END) {
         const topHeight = generateTopHeight();
 
@@ -294,7 +306,7 @@ export default function NormalFlappyBird() {
       const nextPipes: PipeInstance[] = [];
 
       for (const pipe of pipesRef.current) {
-        pipe.x -= SPEED;
+        pipe.x -= SPEED * deltaFactor;
         pipe.el.style.transform = `translate3d(${pipe.x}px, 0, 0)`;
 
         if (!pipe.passed && pipe.x + PIPE_WIDTH < BIRD_X) {
@@ -371,13 +383,25 @@ export default function NormalFlappyBird() {
     <Flex direction="column" align="center" style={{ margin: '20px auto', width: '100%' }}>
       <LoadingProgressBar />
 
-      <Box style={{ width: scaledWidth, height: scaledHeight, margin: '0 auto' }}>
+      {/* Внешний контейнер с фиксированным размером + overflow hidden */}
+      <Box
+        style={{
+          width: scaledWidth,
+          height: scaledHeight,
+          margin: '0 auto',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Игровое поле — absolute + scale (теперь точно помещается на телефонах) */}
         <Box
           onClick={jump}
           style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
             width: GAME_WIDTH,
             height: GAME_HEIGHT,
-            position: 'relative',
             backgroundColor: '#0a001a',
             borderRadius: 12,
             overflow: 'hidden',
