@@ -92,27 +92,19 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
   }
 }
 
-function isAlreadyProxied(url: string) {
-  return url.startsWith(`${API_URL}/proxy?url=`) || url.includes('/proxy?url=');
-}
-
-function toProxyUrl(url: string | null) {
-  if (!url) return '';
-  if (isAlreadyProxied(url)) return url;
+function toMediaUrl(rawUrl: string | null) {
+  if (!rawUrl) return '';
+  if (rawUrl.startsWith(`${API_URL}/media/`)) return rawUrl;
 
   try {
-    const parsed = new URL(url);
-    if (parsed.origin === API_URL && parsed.pathname === '/proxy') return url;
+    const parsed = new URL(rawUrl);
+    if (parsed.origin === API_URL && parsed.pathname.startsWith('/media/')) {
+      return rawUrl;
+    }
+    return `${API_URL}/media${parsed.pathname}${parsed.search}`;
   } catch {
-    // ignore malformed url
+    return '';
   }
-
-  return `${API_URL}/proxy?url=${encodeURIComponent(url)}`;
-}
-
-function getDisplayUrl(rawUrl: string | null, forceProxy: boolean) {
-  if (!rawUrl) return '';
-  return forceProxy ? toProxyUrl(rawUrl) : rawUrl;
 }
 
 type MediaCardProps = { post: Post };
@@ -143,11 +135,11 @@ function MediaCard({ post }: MediaCardProps) {
   const h = post.height ?? post.preview_height ?? 1;
 
   const rawSrc = isVideo
-    ? getDisplayUrl(fileUrl, true)
+    ? fileUrl
     : imageCandidates[candidateIndex] || imageCandidates[0] || '';
 
   const src = rawSrc;
-  const poster = isVideo ? getDisplayUrl(previewUrl || sampleUrl || null, true) : '';
+  const poster = isVideo ? previewUrl || sampleUrl || '' : '';
 
   useEffect(() => {
     if (!isVideo) return;
