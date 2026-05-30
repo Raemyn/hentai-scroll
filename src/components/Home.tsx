@@ -27,7 +27,7 @@ type Post = {
   tags?: string | null;
 };
 
-const API_URL = 'https://hentai-proxy.zhekalah.workers.dev';
+const API_URL = 'https://just.zhekalah.workers.dev';
 const LIMIT = 15;
 const MAX_CARD_HEIGHT = 700;
 
