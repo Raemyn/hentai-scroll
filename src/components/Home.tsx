@@ -13,7 +13,6 @@ import {
 } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import '@mantine/core/styles.css';
-import LoadingGame from './LoadingGame';
 
 type Post = {
   id: number;
@@ -28,7 +27,7 @@ type Post = {
   tags?: string | null;
 };
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const API_URL = 'https://hentai-proxy.zhekalah.workers.dev';
 const LIMIT = 15;
 const MAX_CARD_HEIGHT = 700;
 
@@ -93,6 +92,29 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
   }
 }
 
+function isAlreadyProxied(url: string) {
+  return url.startsWith(`${API_URL}/proxy?url=`) || url.includes('/proxy?url=');
+}
+
+function toProxyUrl(url: string | null) {
+  if (!url) return '';
+  if (isAlreadyProxied(url)) return url;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin === API_URL && parsed.pathname === '/proxy') return url;
+  } catch {
+    // ignore malformed url
+  }
+
+  return `${API_URL}/proxy?url=${encodeURIComponent(url)}`;
+}
+
+function getDisplayUrl(rawUrl: string | null, forceProxy: boolean) {
+  if (!rawUrl) return '';
+  return forceProxy ? toProxyUrl(rawUrl) : rawUrl;
+}
+
 type MediaCardProps = { post: Post };
 
 function MediaCard({ post }: MediaCardProps) {
@@ -106,11 +128,26 @@ function MediaCard({ post }: MediaCardProps) {
   const isVideo = Boolean(fileUrl && isVideoUrl(fileUrl));
   const isGif = Boolean(fileUrl && isGifUrl(fileUrl));
 
-  const src = isVideo ? fileUrl : sampleUrl || previewUrl || fileUrl;
-  const originalSrc = fileUrl || src;
+  const imageCandidates = useMemo(() => {
+    const list = [sampleUrl, previewUrl, fileUrl].filter(Boolean) as string[];
+    return [...new Set(list)];
+  }, [sampleUrl, previewUrl, fileUrl]);
+
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [post.id]);
 
   const w = post.width ?? post.preview_width ?? 1;
   const h = post.height ?? post.preview_height ?? 1;
+
+  const rawSrc = isVideo
+    ? getDisplayUrl(fileUrl, true)
+    : imageCandidates[candidateIndex] || imageCandidates[0] || '';
+
+  const src = rawSrc;
+  const poster = isVideo ? getDisplayUrl(previewUrl || sampleUrl || null, true) : '';
 
   useEffect(() => {
     if (!isVideo) return;
@@ -121,8 +158,11 @@ function MediaCard({ post }: MediaCardProps) {
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) video.play().catch(() => {});
-        else video.pause();
+        if (entry.isIntersecting) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
       },
       { rootMargin: '-20% 0px -20% 0px' }
     );
@@ -170,11 +210,11 @@ function MediaCard({ post }: MediaCardProps) {
           <video
             ref={videoRef}
             src={src}
-            poster={previewUrl || undefined}
+            poster={poster || undefined}
             muted
             loop
             playsInline
-            onClick={() => window.open(originalSrc, '_blank')}
+            onClick={() => window.open(src, '_blank', 'noopener,noreferrer')}
             style={{
               width: '100%',
               height: '100%',
@@ -188,7 +228,13 @@ function MediaCard({ post }: MediaCardProps) {
             src={src}
             alt={`Post ${post.id}`}
             loading="lazy"
-            onClick={() => window.open(originalSrc, '_blank')}
+            onError={() => {
+              setCandidateIndex((prev) => {
+                if (prev + 1 < imageCandidates.length) return prev + 1;
+                return prev;
+              });
+            }}
+            onClick={() => window.open(src, '_blank', 'noopener,noreferrer')}
             style={{
               width: '100%',
               height: '100%',
@@ -208,7 +254,6 @@ export default function Home() {
   const [hasMore, setHasMore] = useState(true);
 
   const [serverReady, setServerReady] = useState(false);
-  const [serverBooting, setServerBooting] = useState(false);
 
   const [tagInput, setTagInput] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -229,17 +274,17 @@ export default function Home() {
   const is2Col = useMediaQuery('(min-width: 750px)');
   const columnCount = is3Col ? 3 : is2Col ? 2 : 1;
 
-  const visiblePosts = useMemo(
-    () =>
-      [...posts].sort((a, b) => {
-        if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
-        if (sortMode === 'top') {
-          return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
-        }
-        return (b.id ?? 0) - (a.id ?? 0);
-      }),
-    [posts, sortMode]
-  );
+  const visiblePosts = useMemo(() => {
+    const filtered = onlyVideos ? posts.filter((p) => isVideoUrl(p.file_url || '')) : posts;
+
+    return [...filtered].sort((a, b) => {
+      if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
+      if (sortMode === 'top') {
+        return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
+      }
+      return (b.id ?? 0) - (a.id ?? 0);
+    });
+  }, [posts, sortMode, onlyVideos]);
 
   const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
 
@@ -260,15 +305,9 @@ export default function Home() {
 
           if (cancelled) return;
           setServerReady(true);
-          setServerBooting(false);
           return;
         } catch {
           if (cancelled) return;
-
-          // Только здесь включаем игру — значит сервер реально ещё поднимается
-          setServerBooting(true);
-
-          // небольшая пауза перед следующим пингом
           await new Promise((r) => window.setTimeout(r, 900));
         }
       }
@@ -353,12 +392,9 @@ export default function Home() {
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
 
-        const finalTags = [appliedTags.trim(), onlyVideos ? 'gif' : '']
-          .filter(Boolean)
-          .join(' ')
-          .trim();
-
-        if (finalTags) url.searchParams.set('tags', finalTags);
+        if (appliedTags.trim()) {
+          url.searchParams.set('tags', appliedTags.trim());
+        }
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         if (!res.ok) throw new Error('Failed to load posts');
@@ -381,7 +417,7 @@ export default function Home() {
 
     load();
     return () => controller.abort();
-  }, [serverReady, page, appliedTags, onlyVideos]);
+  }, [serverReady, page, appliedTags]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -582,7 +618,23 @@ export default function Home() {
         <div ref={sentinelRef} style={{ height: 1 }} />
       </Container>
 
-      {!serverReady && serverBooting && <LoadingGame />}
+      {!serverReady && (
+        <Box
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(10,10,10,0.92)',
+            zIndex: 999,
+          }}
+        >
+          <Text size="sm" c="#aaa" fw={500}>
+            Подключение к серверу...
+          </Text>
+        </Box>
+      )}
 
       {serverReady && loading && (
         <Box
