@@ -94,13 +94,30 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
 
 function toMediaUrl(rawUrl: string | null) {
   if (!rawUrl) return '';
-  if (rawUrl.startsWith(`${API_URL}/media/`)) return rawUrl;
 
   try {
-    const parsed = new URL(rawUrl);
+    const parsed = new URL(rawUrl, API_URL);
+
     if (parsed.origin === API_URL && parsed.pathname.startsWith('/media/')) {
-      return rawUrl;
+      return parsed.toString();
     }
+
+    if (parsed.origin === API_URL && parsed.pathname === '/proxy') {
+      const inner = parsed.searchParams.get('url');
+      if (!inner) return '';
+
+      const innerUrl = new URL(inner, API_URL);
+      return `${API_URL}/media${innerUrl.pathname}${innerUrl.search}`;
+    }
+
+    if (parsed.pathname.startsWith('/proxy')) {
+      const inner = parsed.searchParams.get('url');
+      if (!inner) return '';
+
+      const innerUrl = new URL(inner, API_URL);
+      return `${API_URL}/media${innerUrl.pathname}${innerUrl.search}`;
+    }
+
     return `${API_URL}/media${parsed.pathname}${parsed.search}`;
   } catch {
     return '';
@@ -113,9 +130,9 @@ function MediaCard({ post }: MediaCardProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const fileUrl = post.file_url || '';
-  const previewUrl = post.preview_url || '';
-  const sampleUrl = post.sample_url || '';
+  const fileUrl = toMediaUrl(post.file_url || null);
+  const previewUrl = toMediaUrl(post.preview_url || null);
+  const sampleUrl = toMediaUrl(post.sample_url || null);
 
   const isVideo = Boolean(fileUrl && isVideoUrl(fileUrl));
   const isGif = Boolean(fileUrl && isGifUrl(fileUrl));
@@ -244,7 +261,6 @@ export default function Home() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-
   const [serverReady, setServerReady] = useState(false);
 
   const [tagInput, setTagInput] = useState('');
@@ -267,16 +283,14 @@ export default function Home() {
   const columnCount = is3Col ? 3 : is2Col ? 2 : 1;
 
   const visiblePosts = useMemo(() => {
-    const filtered = onlyVideos ? posts.filter((p) => isVideoUrl(p.file_url || '')) : posts;
-
-    return [...filtered].sort((a, b) => {
+    return [...posts].sort((a, b) => {
       if (sortMode === 'oldest') return (a.id ?? 0) - (b.id ?? 0);
       if (sortMode === 'top') {
         return (b.score ?? 0) - (a.score ?? 0) || (b.id ?? 0) - (a.id ?? 0);
       }
       return (b.id ?? 0) - (a.id ?? 0);
     });
-  }, [posts, sortMode, onlyVideos]);
+  }, [posts, sortMode]);
 
   const columns = useMemo(() => buildColumns(visiblePosts, columnCount), [visiblePosts, columnCount]);
 
@@ -384,8 +398,13 @@ export default function Home() {
         url.searchParams.set('limit', String(LIMIT));
         url.searchParams.set('pid', String(page));
 
-        if (appliedTags.trim()) {
-          url.searchParams.set('tags', appliedTags.trim());
+        const finalTags = [appliedTags.trim(), onlyVideos ? 'animated' : '']
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+
+        if (finalTags) {
+          url.searchParams.set('tags', finalTags);
         }
 
         const res = await fetch(url.toString(), { signal: controller.signal });
@@ -409,7 +428,7 @@ export default function Home() {
 
     load();
     return () => controller.abort();
-  }, [serverReady, page, appliedTags]);
+  }, [serverReady, page, appliedTags, onlyVideos]);
 
   useEffect(() => {
     const el = sentinelRef.current;
